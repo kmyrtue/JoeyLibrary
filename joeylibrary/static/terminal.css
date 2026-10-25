@@ -1,0 +1,157 @@
+/* Green-phosphor terminal look, in the spirit of the Fallout wall terminals and Pip-Boy. */
+@font-face { font-family: 'VT323'; src: url('/static/fonts/VT323-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'Share Tech Mono'; src: url('/static/fonts/ShareTechMono-Regular.ttf') format('truetype'); }
+
+:root {
+  --green: #1aff80;
+  --green-mid: #13c463;
+  --green-dim: #0b7a3e;
+  --green-faint: #06331b;
+  --bg: #030a05;
+  --bg-raised: #06140b;
+  --amber: #ffb642;
+  --red: #ff5a4a;
+  --glow: 0 0 2px rgba(26, 255, 128, .9), 0 0 8px rgba(26, 255, 128, .35);
+  --font-term: 'Share Tech Mono', 'DejaVu Sans Mono', 'Noto Sans Mono', monospace;
+  --font-big: 'VT323', 'Share Tech Mono', monospace;
+}
+
+html, body, .q-layout, .q-page-container, .q-page, .nicegui-content { background: var(--bg) !important; }
+body, body *:not(.q-icon):not(.material-icons) { font-family: var(--font-term); }
+body { color: var(--green); text-shadow: var(--glow); font-size: 16px; letter-spacing: .02em; }
+::selection { background: var(--green); color: var(--bg); text-shadow: none; }
+
+/* CRT: scanlines over everything, darker corners */
+body::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+  background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) 2px, rgba(0, 0, 0, .28) 3px);
+}
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 9998;
+  background: radial-gradient(ellipse at center, rgba(26, 255, 128, .05) 0%, rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, .55) 100%);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .q-layout { animation: flicker 6s infinite steps(1); }
+  @keyframes flicker { 0%, 100% { opacity: 1; } 47% { opacity: .96; } 48% { opacity: 1; } 73% { opacity: .98; } }
+}
+
+/* ---------- frame ---------- */
+.term-header { background: var(--bg) !important; border-bottom: 1px dashed var(--green-dim); padding: 10px 20px; box-shadow: none; }
+.term-banner { font-family: var(--font-big); font-size: 26px; line-height: 1; color: var(--green); }
+.term-status { font-size: 13px; color: var(--green-mid); }
+.term-drawer { background: var(--bg) !important; border-right: 1px dashed var(--green-dim) !important; padding: 18px 10px; }
+.term-drawer .q-drawer__content { display: flex; flex-direction: column; gap: 2px; }
+.term-menu { display: block; padding: 4px 10px; color: var(--green) !important; text-decoration: none !important;
+  font-family: var(--font-big); font-size: 24px; line-height: 1.1; white-space: nowrap; }
+.term-menu:hover, .term-menu.active { background: var(--green); color: var(--bg) !important; text-shadow: none; }
+.term-menu.active::after { content: " <"; }
+.term-hint { margin-top: auto; font-size: 12px; color: var(--green-dim); padding: 0 10px; }
+.term-title { font-family: var(--font-big); font-size: 38px; line-height: 1; margin: 2px 0 6px; }
+.term-title::after { content: "\2588"; margin-left: 4px; animation: blink 1.05s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.term-sub { font-family: var(--font-big); font-size: 26px; line-height: 1; margin-top: 14px; }
+.term-dim { color: var(--green-mid); }
+.term-faint { color: var(--green-dim); font-size: 13px; }
+.term-warn { color: var(--amber) !important; text-shadow: 0 0 6px rgba(255, 182, 66, .45); }
+.term-error { color: var(--red) !important; text-shadow: 0 0 6px rgba(255, 90, 74, .45); }
+.term-rule { border-top: 1px dashed var(--green-dim); width: 100%; margin: 8px 0; }
+.term-pre { white-space: pre; font-family: var(--font-big); font-size: 22px; line-height: 1.4; overflow-x: auto; max-width: 100%; }
+
+/* ---------- buttons: bracketed text, inverted on hover ---------- */
+.q-btn.term-btn { border-radius: 0; padding: 2px 8px; min-height: 0; color: var(--green) !important; background: transparent !important;
+  font-family: var(--font-big); font-size: 22px; text-transform: uppercase; letter-spacing: .04em; }
+.q-btn.term-btn:hover, .q-btn.term-btn:focus-visible { background: var(--green) !important; color: var(--bg) !important; text-shadow: none; }
+.q-btn.term-btn .q-focus-helper { display: none; }
+.q-btn.term-btn.danger { color: var(--red) !important; }
+.q-btn.term-btn.danger:hover { background: var(--red) !important; color: var(--bg) !important; }
+
+/* ---------- form fields: no boxes, just a label and a dashed underline ---------- */
+.q-field { font-size: 16px; }
+.q-field__control, .q-field__native, .q-field__input, .q-field__prefix, .q-field__suffix,
+.q-field__marginal, .q-select__dropdown-icon { color: var(--green) !important; }
+.q-field__label { color: var(--green-mid) !important; text-transform: uppercase; letter-spacing: .06em; }
+.q-field--standard .q-field__control:before { border-bottom: 1px dashed var(--green-dim) !important; }
+.q-field--standard .q-field__control:after { background: var(--green) !important; height: 1px; }
+.q-field--focused .q-field__label { color: var(--green) !important; }
+.q-field__native::placeholder { color: var(--green-dim); }
+input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(64%) sepia(98%) saturate(500%) hue-rotate(90deg); }
+.q-chip { border-radius: 0; background: var(--green-faint) !important; color: var(--green) !important; border: 1px solid var(--green-dim); margin: 2px 4px 2px 0; }
+.q-chip__icon--remove { color: var(--green) !important; opacity: .8; }
+.q-checkbox__label { color: var(--green); text-transform: uppercase; }
+.q-checkbox__bg { border-radius: 0 !important; border-color: var(--green) !important; }
+.q-checkbox__inner--truthy .q-checkbox__bg { background: var(--green) !important; }
+.q-checkbox__svg { color: var(--bg) !important; }
+.q-toggle__label { text-transform: uppercase; }
+.q-btn-toggle { border: 1px solid var(--green-dim); border-radius: 0 !important; }
+.q-btn-toggle .q-btn { border-radius: 0 !important; font-family: var(--font-big); font-size: 20px; }
+.q-btn-toggle .q-btn.bg-primary { color: var(--bg) !important; text-shadow: none; }
+
+/* dropdown menus and dialogs */
+.q-menu { background: var(--bg-raised) !important; border: 1px solid var(--green-dim); border-radius: 0 !important; box-shadow: 0 0 18px rgba(26, 255, 128, .15) !important; }
+.q-menu .q-item { color: var(--green); min-height: 30px; }
+.q-menu .q-item.q-manual-focusable--focused, .q-menu .q-item:hover, .q-menu .q-item--active { background: var(--green) !important; color: var(--bg) !important; text-shadow: none; }
+.q-menu .q-item .q-focus-helper { display: none; }
+.q-dialog__backdrop { background: rgba(0, 0, 0, .75) !important; }
+.q-card.term-card { background: var(--bg) !important; border: 1px solid var(--green); border-radius: 0; box-shadow: 0 0 30px rgba(26, 255, 128, .2); color: var(--green); }
+.q-notification { border-radius: 0 !important; background: var(--bg-raised) !important; border: 1px solid var(--green); color: var(--green) !important;
+  font-family: var(--font-big); font-size: 22px; box-shadow: 0 0 18px rgba(26, 255, 128, .25); }
+.q-notification.bg-negative { border-color: var(--red); color: var(--red) !important; }
+.q-notification.bg-warning { border-color: var(--amber); color: var(--amber) !important; }
+
+/* ---------- data grid ---------- */
+.nicegui-aggrid, .nicegui-aggrid .ag-root-wrapper {
+  --ag-background-color: var(--bg);
+  --ag-foreground-color: var(--green);
+  --ag-text-color: var(--green);
+  --ag-header-background-color: var(--bg-raised);
+  --ag-header-text-color: var(--green);
+  --ag-header-foreground-color: var(--green);
+  --ag-border-color: var(--green-dim);
+  --ag-row-border-color: var(--green-faint);
+  --ag-odd-row-background-color: #04100a;
+  --ag-row-hover-color: var(--green-faint);
+  --ag-selected-row-background-color: var(--green-faint);
+  --ag-input-focus-border-color: var(--green);
+  --ag-input-border-color: var(--green-dim);
+  --ag-input-background-color: var(--bg);
+  --ag-chrome-background-color: var(--bg-raised);
+  --ag-icon-color: var(--green);
+  --ag-accent-color: var(--green);
+  --ag-font-family: var(--font-term);
+  --ag-font-size: 15px;
+  --ag-wrapper-border-radius: 0;
+  --ag-border-radius: 0;
+  --ag-spacing: 6px;
+}
+.nicegui-aggrid .ag-header-cell-text { text-transform: uppercase; letter-spacing: .06em; }
+.nicegui-aggrid .ag-row-hover .ag-cell { cursor: pointer; }
+.nicegui-aggrid input { color: var(--green) !important; font-family: var(--font-term) !important; }
+.nicegui-aggrid .ag-popup, .nicegui-aggrid .ag-menu { background: var(--bg-raised); color: var(--green); }
+
+/* ---------- loans list ---------- */
+.loan-grid { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(140px, 1.4fr) minmax(110px, 1fr) 110px 70px auto; gap: 4px 18px; align-items: center; width: 100%; }
+.loan-grid .head { color: var(--green-mid); border-bottom: 1px dashed var(--green-dim); padding-bottom: 2px; text-transform: uppercase; font-size: 14px; }
+
+/* ---------- menu sections ---------- */
+.term-menu-section { font-size: 12px; letter-spacing: .14em; color: var(--green-dim); padding: 14px 10px 4px; white-space: nowrap; }
+
+/* ---------- everything can be selected and copied ---------- */
+body, .q-layout, .q-page, .q-card, .q-field__native, .nicegui-aggrid .ag-cell, .nicegui-aggrid .ag-header-cell-text {
+  -webkit-user-select: text; user-select: text;
+}
+.q-btn, .q-checkbox, .q-toggle, .q-btn-toggle { -webkit-user-select: none; user-select: none; }
+
+/* ---------- scrollbars: block thumb on a dashed track, no arrows ---------- */
+/* Chromium ignores ::-webkit-scrollbar when scrollbar-color/width are set, so keep those at auto */
+* { scrollbar-color: auto !important; scrollbar-width: auto !important; }
+::-webkit-scrollbar { width: 14px; height: 14px; background: var(--bg); }
+::-webkit-scrollbar-track { background: var(--bg); box-shadow: inset 0 0 0 1px var(--green-faint); }
+::-webkit-scrollbar-thumb {
+  background: repeating-linear-gradient(45deg, var(--green-dim) 0 3px, var(--green-mid) 3px 5px);
+  border: 3px solid var(--bg); border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active { background: var(--green); }
+::-webkit-scrollbar-corner { background: var(--bg); }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.nicegui-aggrid .ag-body-horizontal-scroll, .nicegui-aggrid .ag-horizontal-left-spacer,
+.nicegui-aggrid .ag-horizontal-right-spacer { background: var(--bg); border-color: var(--green-dim); }
