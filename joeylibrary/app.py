@@ -53,7 +53,7 @@ def frame(active: str) -> None:
     owned = db.stats(date.today().year)['owned'][0]
     with ui.header().classes('term-header'):
         with ui.column().classes('gap-0'):
-            ui.label('JOEYCO INDUSTRIES (TM) TERMLINK PROTOCOL').classes('term-banner')
+            ui.label(settings.get('title') or backup.DEFAULT_TITLE).classes('term-banner')
             ui.label(f'LIBRARY OS v1.0  //  {owned} VOLUMES ON FILE  //  LAST BACKUP: {last}').classes('term-status')
     with ui.left_drawer(value=True, fixed=True).props('width=250 behavior=desktop').classes('term-drawer'):
         for entry in MENU:
@@ -623,15 +623,18 @@ def settings_page() -> None:
 
     ui.label('> LIBRARY SETTINGS').classes('term-sub mt-6')
     ui.element('div').classes('term-rule max-w-4xl')
+    title = ui.input('TITLE AT THE TOP', value=settings['title']).classes('w-full max-w-4xl')
     goal = ui.number('YEARLY READING GOAL (BOOKS)', value=settings['reading_goal'], min=0, precision=0).classes('w-64')
     ui.label(f'DATABASE FILE: {db.DB_PATH}').classes('term-faint')
     library_status = ui.label('').classes('term-dim')
 
     def save_library_settings() -> None:
         current = backup.load_settings()
+        current['title'] = (title.value or '').strip() or backup.DEFAULT_TITLE
         current['reading_goal'] = int(goal.value or 0)
         backup.save_settings(current)
-        library_status.set_text('LIBRARY SETTINGS SAVED.')
+        title.value = current['title']
+        library_status.set_text('LIBRARY SETTINGS SAVED. THE NEW TITLE SHOWS ON THE NEXT PAGE YOU OPEN.')
 
     button('SAVE LIBRARY SETTINGS', save_library_settings)
 

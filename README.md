@@ -36,7 +36,7 @@ Your books are not in this folder (see below), so updating never touches them.
 | RENTED OUT | Books currently lent out, oldest loan first. Loans of 60 days or more are marked `!`. Lend a book at the bottom. |
 | WISHLIST | Books you want. Double-click one and press BOUGHT IT to move it into the library. |
 | STATISTICS | Books and pages read per year and month, genres, authors, and a summary of the whole library. |
-| SETTINGS | Dropbox backup folder, how many dated copies to keep, backup on close, and the yearly reading goal. |
+| SETTINGS | Dropbox backup folder, how many dated copies to keep, backup on close, the title at the top of the screen, and the yearly reading goal. |
 
 ## Backup to Dropbox
 

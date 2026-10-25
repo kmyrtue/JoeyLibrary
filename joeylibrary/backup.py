@@ -26,6 +26,9 @@ def find_dropbox() -> Path | None:
     return fallback if fallback.is_dir() else None
 
 
+DEFAULT_TITLE = 'JOEYCO INDUSTRIES (TM) TERMLINK PROTOCOL'
+
+
 def load_settings() -> dict:
     dropbox = find_dropbox()
     settings = {
@@ -34,6 +37,7 @@ def load_settings() -> dict:
         'backup_on_exit': True,
         'last_backup': None,
         'reading_goal': 30,
+        'title': DEFAULT_TITLE,
     }
     try:
         settings.update(json.loads(SETTINGS_FILE.read_text(encoding='utf-8')))
