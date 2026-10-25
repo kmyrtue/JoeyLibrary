@@ -187,8 +187,17 @@ class BookForm:
             self.authors.value = found['AuthorList']
         if found.get('PageCount'):
             self.pages.value = found['PageCount']
+        if found.get('Format'):
+            self.format.set_options(sorted(set(self.format.options) | {found['Format']}, key=str.lower))
+            self.format.value = found['Format']
         details = ', '.join(x for x in (found.get('Publisher'), found.get('Year')) if x)
         message = f"RECORD FOUND IN {found['Source'].upper()}" + (f'  //  {details}' if details else '')
+        if found.get('Format') == isbn_lookup.AUDIOBOOK:
+            if found.get('PrintISBN'):
+                message += f"  //  AUDIOBOOK: PAGES FROM PRINTED EDITION {found['PrintISBN']} ({found['PrintSource'].upper()})"
+            else:
+                message += '  //  AUDIOBOOK: NO PRINTED EDITION FOUND, ENTER THE PAGES BY HAND'
+                self.status.classes('term-warn')
         if already:
             message += f"  //  NOTE: THIS ISBN IS ALREADY IN THE {' AND '.join(already)}"
             self.status.classes('term-warn')
