@@ -31,7 +31,7 @@ Your books are not in this folder (see below), so updating never touches them.
 
 | Menu | What it does |
 |---|---|
-| INSERT BOOK | Type or scan the ISBN and press Enter: title, authors and pages are filled in from Open Library (Google Books as fallback). Choose LIBRARY or WISHLIST at the top. In AUTHOR(S) and GENRES, type a new name and press Enter to add it; put the main author first. |
+| INSERT BOOK | Type or scan the ISBN and press Enter: title, authors and pages are filled in from ISBNdb (if an ISBNdb API key is entered under SETTINGS; a paid service from isbndb.com, the same data isbnsearch.org shows), otherwise from Google Books, with Open Library last. Choose LIBRARY or WISHLIST at the top. In AUTHOR(S) and GENRES, type a new name and press Enter to add it; put the main author first. |
 | BOOKS | Every book you own. Type in the box under a column heading to filter that column (number columns accept `>`, `<` and ranges through the filter icon). The search box searches all columns. Double-click a row to edit, lend, or delete the book. |
 | RENTED OUT | Books currently lent out, oldest loan first. Loans of 60 days or more are marked `!`. Lend a book at the bottom. |
 | WISHLIST | Books you want. Double-click one and press BOUGHT IT to move it into the library. |

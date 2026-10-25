@@ -44,6 +44,7 @@ def load_settings() -> dict:
         'last_backup': None,
         'reading_goal': 30,
         'title': DEFAULT_TITLE,
+        'isbndb_key': '',
         'text_color': THEMES[DEFAULT_THEME][0],
         'bg_color': THEMES[DEFAULT_THEME][1],
     }
