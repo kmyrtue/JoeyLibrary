@@ -31,12 +31,31 @@ Your books are not in this folder (see below), so updating never touches them.
 
 | Menu | What it does |
 |---|---|
-| INSERT BOOK | Type or scan the ISBN and press Enter: title, authors and pages are filled in from ISBNdb (if an ISBNdb API key is entered under SETTINGS; a paid service from isbndb.com, the same data isbnsearch.org shows), otherwise from Google Books, with Open Library last. Choose LIBRARY or WISHLIST at the top. In AUTHOR(S) and GENRES, type a new name and press Enter to add it; put the main author first. |
+| INSERT BOOK | Type or scan the ISBN and press Enter: title, authors and pages are filled in from the book databases (see *Book lookup* below). Choose LIBRARY or WISHLIST at the top. In AUTHOR(S) and GENRES, type a new name and press Enter to add it; put the main author first. |
 | BOOKS | Every book you own. Type in the box under a column heading to filter that column (number columns accept `>`, `<` and ranges through the filter icon). The search box searches all columns. Double-click a row to edit, lend, or delete the book. |
 | RENTED OUT | Books currently lent out, oldest loan first. Loans of 60 days or more are marked `!`. Lend a book at the bottom. |
 | WISHLIST | Books you want. Double-click one and press BOUGHT IT to move it into the library. |
 | STATISTICS | Books and pages read per year and month, genres, authors, and a summary of the whole library. |
 | SETTINGS | Dropbox backup folder, how many dated copies to keep, backup on close, the title at the top of the screen, the yearly reading goal, and the colours (GREEN PHOSPHOR is the standard, DAEMON CYAN matches the Daemon-2.0 icon theme, or pick your own text and background colour). |
+
+## Book lookup
+
+An ISBN is looked up in these, in order, until one knows the book:
+
+1. **ISBNdb**, only if an ISBNdb API key is entered under SETTINGS. Paid (isbndb.com); the same data isbnsearch.org shows.
+2. **Google Books**. Works without a key, but then shares a daily quota with everyone else and is often used up.
+   A free personal key avoids that (see below).
+3. **LIBRIS**, the Swedish national library catalogue. Free, no key; good for Nordic and many English books.
+4. **Open Library**, last because it often finds the wrong book.
+
+**Free Google Books API key:**
+
+1. Open https://console.cloud.google.com/apis/library/books.googleapis.com and sign in with a Google account
+   (create a project when asked, any name).
+2. Press **Enable**.
+3. Open https://console.cloud.google.com/apis/credentials, press **Create credentials → API key**, and copy the key.
+4. Optional but sensible: edit the key and under *API restrictions* choose *Restrict key → Books API*.
+5. Paste it into SETTINGS → GOOGLE BOOKS API KEY and press SAVE LIBRARY SETTINGS.
 
 ## Backup to Dropbox
 

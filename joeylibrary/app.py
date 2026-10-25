@@ -166,11 +166,13 @@ class BookForm:
             return
         already = [KIND_NAMES[k] for k in db.find_isbn(code)
                    if not (k == self.kind and isbn_lookup.clean(self.original.get('ISBN')) == code)]
-        key = (backup.load_settings().get('isbndb_key') or '').strip()
-        self.status.set_text(f"QUERYING {'ISBNDB' if key else 'GOOGLE BOOKS'} ...")
+        settings = backup.load_settings()
+        key = (settings.get('isbndb_key') or '').strip()
+        google_key = (settings.get('google_books_key') or '').strip()
+        self.status.set_text('SEARCHING THE BOOK DATABASES ...')
         self.status.classes(remove='term-warn term-error')
         try:
-            found = await run.io_bound(isbn_lookup.lookup, code, key)
+            found = await run.io_bound(isbn_lookup.lookup, code, key, google_key)
         except (ValueError, ConnectionError, isbn_lookup.BadKey) as e:
             self.status.set_text(f'ERROR: {e}'.upper())
             self.status.classes('term-error')
@@ -672,8 +674,10 @@ def settings_page() -> None:
     ui.element('div').classes('term-rule max-w-4xl')
     title = ui.input('TITLE AT THE TOP', value=settings['title']).classes('w-full max-w-4xl')
     goal = ui.number('YEARLY READING GOAL (BOOKS)', value=settings['reading_goal'], min=0, precision=0).classes('w-64')
-    isbndb_key = ui.input('ISBNDB API KEY (FROM ISBNDB.COM; EMPTY = GOOGLE BOOKS AND OPEN LIBRARY ONLY)',
+    isbndb_key = ui.input('ISBNDB API KEY (FROM ISBNDB.COM; EMPTY = ONLY THE FREE SOURCES)',
                           value=settings['isbndb_key'], password=True, password_toggle_button=True).classes('w-full max-w-4xl')
+    google_key = ui.input('GOOGLE BOOKS API KEY (FREE, SEE README; EMPTY = SHARED QUOTA THAT IS OFTEN USED UP)',
+                          value=settings['google_books_key'], password=True, password_toggle_button=True).classes('w-full max-w-4xl')
     ui.label(f'DATABASE FILE: {db.DB_PATH}').classes('term-faint')
     library_status = ui.label('').classes('term-dim')
 
@@ -682,6 +686,7 @@ def settings_page() -> None:
         current['title'] = (title.value or '').strip() or backup.DEFAULT_TITLE
         current['reading_goal'] = int(goal.value or 0)
         current['isbndb_key'] = (isbndb_key.value or '').strip()
+        current['google_books_key'] = (google_key.value or '').strip()
         backup.save_settings(current)
         title.value = current['title']
         library_status.set_text('LIBRARY SETTINGS SAVED. THE NEW TITLE SHOWS ON THE NEXT PAGE YOU OPEN.')
