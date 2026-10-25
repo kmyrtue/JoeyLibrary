@@ -330,6 +330,18 @@ def book_grid(kind: str, columns: list[dict]) -> None:
         grid.update()
         count.set_text(f"{len(grid.options['rowData'])} RECORDS")
 
+    # put the columns in the order last dragged into on this page; new or unknown columns go last
+    saved = backup.load_settings().get('column_order', {}).get(kind, [])
+    columns = sorted(columns, key=lambda c: saved.index(c['field']) if c['field'] in saved else len(saved))
+
+    async def save_order(e) -> None:
+        if not e.args.get('finished'):  # still dragging
+            return
+        state = await grid.run_grid_method('getColumnState')
+        current = backup.load_settings()
+        current.setdefault('column_order', {})[kind] = [c['colId'] for c in state]
+        backup.save_settings(current)
+
     with ui.row().classes('w-full items-end gap-4'):
         search = ui.input('SEARCH ALL COLUMNS').classes('grow')
         count = ui.label('').classes('term-dim')
@@ -348,6 +360,7 @@ def book_grid(kind: str, columns: list[dict]) -> None:
     }, auto_size_columns=False).classes('w-full').style('height: calc(100vh - 290px); min-height: 320px')
     search.on_value_change(lambda e: grid.run_grid_method('setGridOption', 'quickFilterText', e.value or ''))
     grid.on('rowDoubleClicked', lambda e: open_editor(kind, e.args['data']['BookID'], refresh), ['data'])
+    grid.on('columnMoved', save_order, ['finished'])
     refresh()
 
 

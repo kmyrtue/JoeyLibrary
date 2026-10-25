@@ -45,6 +45,7 @@ def load_settings() -> dict:
         'reading_goal': 30,
         'title': DEFAULT_TITLE,
         'isbndb_key': '',
+        'column_order': {},  # page -> column fields in the order they were dragged into
         'text_color': THEMES[DEFAULT_THEME][0],
         'bg_color': THEMES[DEFAULT_THEME][1],
     }
