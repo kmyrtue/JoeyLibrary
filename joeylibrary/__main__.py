@@ -7,7 +7,7 @@ from pathlib import Path
 from nicegui import app, ui
 
 from . import app as _pages  # noqa: F401  (registers the pages)
-from . import db
+from . import backup, db
 
 parser = argparse.ArgumentParser(prog='joeylibrary')
 parser.add_argument('--browser', action='store_true', help='open in the web browser instead of an app window')
@@ -34,6 +34,8 @@ if native and sys.platform.startswith('linux'):
     os.environ.setdefault('WEBKIT_DISABLE_DMABUF_RENDERER', '1')
 if native:
     app.native.window_args['text_select'] = True  # pywebview blocks selecting and copying text by default
+    # paint the empty window in the theme's background while the page loads, instead of black or white
+    app.native.window_args['background_color'] = _pages.theme_colors(backup.load_settings())[1]
     ui.run(native=True, window_size=(1400, 880), **options)
 else:
     ui.run(port=args.port, show=not args.no_show, **options)

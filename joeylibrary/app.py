@@ -71,27 +71,42 @@ def apply_theme(settings: dict) -> None:
               positive=text, negative='#ff5a4a', warning='#ffb642', info=text)
 
 
-def frame(active: str) -> None:
-    """Header, left menu and page title shared by every page."""
+def shell() -> None:
+    """Header and left menu, built once per window; the pages below only swap the content under them."""
     settings = backup.load_settings()
     apply_theme(settings)
     ui.dark_mode(True)
-    ui.page_title(f'JOEY LIBRARY - {active}')
-    last = settings.get('last_backup')
-    last = datetime.fromisoformat(last).strftime('%Y-%m-%d %H:%M') if last else 'NEVER'
-    owned = db.stats(date.today().year)['owned'][0]
     with ui.header().classes('term-header'):
         with ui.column().classes('gap-0'):
-            ui.label(settings.get('title') or backup.DEFAULT_TITLE).classes('term-banner')
-            ui.label(f'LIBRARY OS v1.0  //  {owned} VOLUMES ON FILE  //  LAST BACKUP: {last}').classes('term-status')
+            banner = ui.label().classes('term-banner')
+            status = ui.label().classes('term-status')
+    links = {}
     with ui.left_drawer(value=True, fixed=True).props('width=250 behavior=desktop').classes('term-drawer'):
         for entry in MENU:
             if isinstance(entry, str):
                 ui.label(f'-- {entry} --').classes('term-menu-section')
                 continue
             label, path = entry
-            ui.link(f'> {label}', path).classes('term-menu' + (' active' if label == active else ''))
+            links[label] = ui.link(f'> {label}', path).classes('term-menu')
         ui.label(f'{date.today():%Y-%m-%d}  //  TERMINAL READY').classes('term-hint')
+    ui.context.client.shell = {'banner': banner, 'status': status, 'links': links}
+
+
+def frame(active: str) -> None:
+    """Bring the header and menu up to date for the page being shown, and print the page title."""
+    settings = backup.load_settings()
+    ui.page_title(f'JOEY LIBRARY - {active}')
+    last = settings.get('last_backup')
+    last = datetime.fromisoformat(last).strftime('%Y-%m-%d %H:%M') if last else 'NEVER'
+    owned = db.stats(date.today().year)['owned'][0]
+    shell_parts = ui.context.client.shell
+    shell_parts['banner'].set_text(settings.get('title') or backup.DEFAULT_TITLE)
+    shell_parts['status'].set_text(f'LIBRARY OS v1.0  //  {owned} VOLUMES ON FILE  //  LAST BACKUP: {last}')
+    for label, link in shell_parts['links'].items():
+        if label == active:
+            link.classes(add='active')
+        else:
+            link.classes(remove='active')
     ui.label(f'> {active}').classes('term-title')
 
 
@@ -283,7 +298,6 @@ def open_editor(kind: str, book_id: int, on_change) -> None:
 
 # ---------- pages ----------
 
-@ui.page('/insert')
 def insert_page(kind: str = 'owned') -> None:
     frame('INSERT BOOK')
     form = BookForm(kind if kind in db.TABLES else 'owned', allow_kind_switch=True)
@@ -340,7 +354,6 @@ NUM = {'filter': 'agNumberColumnFilter'}
 STARS = {':valueFormatter': 'p => p.value == null ? "" : "*".repeat(p.value)', **NUM}
 
 
-@ui.page('/')
 def books_page() -> None:
     frame('BOOKS')
     book_grid('owned', [
@@ -365,7 +378,6 @@ def books_page() -> None:
     ])
 
 
-@ui.page('/wishlist')
 def wishlist_page() -> None:
     frame('WISHLIST')
     book_grid('wished', [
@@ -470,32 +482,26 @@ def index_page(active: str, table: str, singular: str) -> None:
     refresh()
 
 
-@ui.page('/authors')
 def authors_page() -> None:
     index_page('AUTHORS', 'Authors', 'AUTHOR')
 
 
-@ui.page('/genres')
 def genres_page() -> None:
     index_page('GENRES', 'Genres', 'GENRE')
 
 
-@ui.page('/series')
 def series_page() -> None:
     index_page('SERIES', 'Series', 'SERIES')
 
 
-@ui.page('/formats')
 def formats_page() -> None:
     index_page('FORMATS', 'Formats', 'FORMAT')
 
 
-@ui.page('/editions')
 def editions_page() -> None:
     index_page('EDITIONS', 'Edition', 'EDITION')
 
 
-@ui.page('/loans')
 def loans_page() -> None:
     frame('RENTED OUT')
     listing = ui.column().classes('w-full gap-0')
@@ -587,7 +593,6 @@ def stats_text(year: int, goal: int) -> str:
     return '\n'.join(lines)
 
 
-@ui.page('/stats')
 def stats_page() -> None:
     frame('STATISTICS')
     goal = int(backup.load_settings().get('reading_goal') or 0)
@@ -597,7 +602,6 @@ def stats_page() -> None:
     year.on_value_change(lambda e: output.set_text(stats_text(e.value, goal)))
 
 
-@ui.page('/settings')
 def settings_page() -> None:
     frame('SETTINGS')
     settings = backup.load_settings()
@@ -748,6 +752,30 @@ async def choose_folder(target: ui.input) -> None:
         go(start)
     dialog.on('hide', dialog.delete)
     dialog.open()
+
+
+# ---------- one page for the whole app: switching menu items only swaps the content, no reload ----------
+
+ROUTES = {
+    '/insert': insert_page,
+    '/': books_page,
+    '/wishlist': wishlist_page,
+    '/authors': authors_page,
+    '/genres': genres_page,
+    '/series': series_page,
+    '/formats': formats_page,
+    '/editions': editions_page,
+    '/loans': loans_page,
+    '/stats': stats_page,
+    '/settings': settings_page,
+}
+
+
+@ui.page('/')
+@ui.page('/{_:path}')
+def main_page() -> None:
+    shell()
+    ui.sub_pages(ROUTES).classes('w-full')
 
 
 def backup_on_exit() -> None:
