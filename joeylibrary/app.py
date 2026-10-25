@@ -1,4 +1,5 @@
 """The library user interface: one NiceGUI page per menu item."""
+import re
 from datetime import date, datetime
 from pathlib import Path
 
@@ -41,13 +42,41 @@ def number(value, cast=int):
     return None if value in (None, '') else cast(value)
 
 
+# ---------- colours: two chosen colours, everything else is mixed from them ----------
+
+def hex_color(value, fallback: str) -> str:
+    value = (value or '').strip().lower()
+    return value if re.fullmatch(r'#[0-9a-f]{6}', value) else fallback
+
+
+def mix(a: str, b: str, share: float) -> str:
+    """share of colour a, the rest colour b"""
+    pa = [int(a[i:i + 2], 16) for i in (1, 3, 5)]
+    pb = [int(b[i:i + 2], 16) for i in (1, 3, 5)]
+    return '#' + ''.join(f'{round(x * share + y * (1 - share)):02x}' for x, y in zip(pa, pb))
+
+
+def theme_colors(settings: dict) -> tuple[str, str]:
+    text_default, bg_default = backup.THEMES[backup.DEFAULT_THEME]
+    return hex_color(settings.get('text_color'), text_default), hex_color(settings.get('bg_color'), bg_default)
+
+
+def apply_theme(settings: dict) -> None:
+    text, bg = theme_colors(settings)
+    rgb = ', '.join(str(int(text[i:i + 2], 16)) for i in (1, 3, 5))
+    ui.add_head_html(f'<style>:root {{ --green: {text}; --green-mid: {mix(text, bg, .75)}; '
+                     f'--green-dim: {mix(text, bg, .45)}; --green-faint: {mix(text, bg, .18)}; --bg: {bg}; '
+                     f'--bg-raised: {mix(text, bg, .04)}; --bg-odd: {mix(text, bg, .02)}; --text-rgb: {rgb}; }}</style>')
+    ui.colors(primary=text, secondary=mix(text, bg, .45), accent='#ffb642', dark=bg,
+              positive=text, negative='#ff5a4a', warning='#ffb642', info=text)
+
+
 def frame(active: str) -> None:
     """Header, left menu and page title shared by every page."""
-    ui.colors(primary='#1aff80', secondary='#0b7a3e', accent='#ffb642', dark='#030a05',
-              positive='#1aff80', negative='#ff5a4a', warning='#ffb642', info='#1aff80')
+    settings = backup.load_settings()
+    apply_theme(settings)
     ui.dark_mode(True)
     ui.page_title(f'JOEY LIBRARY - {active}')
-    settings = backup.load_settings()
     last = settings.get('last_backup')
     last = datetime.fromisoformat(last).strftime('%Y-%m-%d %H:%M') if last else 'NEVER'
     owned = db.stats(date.today().year)['owned'][0]
@@ -637,6 +666,41 @@ def settings_page() -> None:
         library_status.set_text('LIBRARY SETTINGS SAVED. THE NEW TITLE SHOWS ON THE NEXT PAGE YOU OPEN.')
 
     button('SAVE LIBRARY SETTINGS', save_library_settings)
+
+    ui.label('> COLOURS').classes('term-sub mt-6')
+    ui.element('div').classes('term-rule max-w-4xl')
+    text_now, bg_now = theme_colors(settings)
+
+    def use_colors(text: str, bg: str) -> None:
+        current = backup.load_settings()
+        current['text_color'], current['bg_color'] = text, bg
+        backup.save_settings(current)
+        ui.navigate.reload()
+
+    ui.label('READY-MADE SCHEMES (CLICK ONE TO USE IT):').classes('term-dim')
+    with ui.row().classes('gap-4'):
+        for name, (text, bg) in backup.THEMES.items():
+            label = name + (' (STANDARD)' if name == backup.DEFAULT_THEME else '')
+            if (text, bg) == (text_now, bg_now):
+                label = '> ' + label + ' <'
+            ui.button(label, on_click=lambda t=text, b=bg: use_colors(t, b)).props('flat no-caps').classes(
+                'term-swatch').style(f'background: {bg} !important; color: {text} !important; border-color: {text};'
+                                     f' text-shadow: 0 0 6px {text}')
+    ui.label('OR CHOOSE YOUR OWN:').classes('term-dim mt-2')
+    with ui.row().classes('gap-6'):
+        text_in = ui.color_input('TEXT COLOUR', value=text_now).classes('w-56')
+        bg_in = ui.color_input('BACKGROUND COLOUR', value=bg_now).classes('w-56')
+    colors_status = ui.label('').classes('term-dim')
+
+    def save_colors() -> None:
+        text, bg = hex_color(text_in.value, ''), hex_color(bg_in.value, '')
+        if not text or not bg:
+            colors_status.classes(add='term-error')
+            colors_status.set_text('USE COLOURS WRITTEN AS #RRGGBB, E.G. #1AFF80.')
+            return
+        use_colors(text, bg)
+
+    button('SAVE COLOURS', save_colors)
 
 
 async def choose_folder(target: ui.input) -> None:

@@ -27,6 +27,12 @@ def find_dropbox() -> Path | None:
 
 
 DEFAULT_TITLE = 'JOEYCO INDUSTRIES (TM) TERMLINK PROTOCOL'
+# the two ready-made colour schemes (text, background); the first one is the standard
+THEMES = {
+    'GREEN PHOSPHOR': ('#1aff80', '#030a05'),
+    'DAEMON CYAN': ('#5df4fe', '#210e15'),  # the Daemon-2.0 icon theme
+}
+DEFAULT_THEME = 'GREEN PHOSPHOR'
 
 
 def load_settings() -> dict:
@@ -38,6 +44,8 @@ def load_settings() -> dict:
         'last_backup': None,
         'reading_goal': 30,
         'title': DEFAULT_TITLE,
+        'text_color': THEMES[DEFAULT_THEME][0],
+        'bg_color': THEMES[DEFAULT_THEME][1],
     }
     try:
         settings.update(json.loads(SETTINGS_FILE.read_text(encoding='utf-8')))
