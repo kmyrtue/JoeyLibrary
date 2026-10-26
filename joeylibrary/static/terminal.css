@@ -180,7 +180,9 @@ body, .q-layout, .q-page, .q-card, .q-field__native, .nicegui-aggrid .ag-cell, .
 .q-btn.term-swatch:hover { filter: brightness(1.25); }
 
 /* ---------- book tables ---------- */
-.term-book-grid { height: calc(100vh - 290px); min-height: 320px; }
+.term-book-grid { min-height: 320px; }  /* the height is set by termFit (app.py) to reach the window's bottom */
+.term-fit { height: calc(100vh - 290px); }  /* until termFit has run */
+.term-detail:empty { display: none; }  /* nothing chosen yet: take no room under the table */
 
 /* ---------- phones (keep 768px in step with MOBILE_WIDTH in app.py) ---------- */
 .term-burger { display: none !important; }
@@ -215,7 +217,7 @@ body, .q-layout, .q-page, .q-card, .q-field__native, .nicegui-aggrid .ag-cell, .
   .q-dialog__inner--minimized > .q-card.term-card { max-width: 100vw !important; width: 100vw; max-height: 100vh !important;
     min-height: 100vh; border: none; }
 
-  .term-book-grid { height: calc(100vh - 250px); min-height: 280px; }
+  .term-book-grid { min-height: 280px; }
   .term-book-grid .ag-pinned-left-header .ag-header-cell-resize { width: 28px; right: 0; }  /* easier to grab with a finger */
   .term-book-grid .ag-pinned-left-header .ag-header-cell-resize::after { width: 3px; height: 60%; top: 20%; background: var(--green); }
   .term-pre { font-size: 15px; }

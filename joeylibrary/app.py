@@ -131,6 +131,15 @@ def shell() -> None:
             links[label].move(group, target_index=i)
 
     ui.add_body_html('''<script>
+    // tables reach down to the bottom of the window, however tall the text above them came out (fonts differ
+    // between systems, and hint lines wrap on narrow windows); checked on resize and a few times a second
+    const termFit = () => document.querySelectorAll('.term-fit').forEach(el => {
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      const height = Math.max(parseFloat(getComputedStyle(el).minHeight) || 0, window.innerHeight - top - 20);
+      if (Math.abs(el.offsetHeight - height) > 1) el.style.height = height + 'px';
+    });
+    window.addEventListener('resize', termFit);
+    setInterval(termFit, 300);
     // the INDEXES in the menu: drag one with the mouse (press and hold on a phone) to move it; the order is
     // then sent to the server, which saves it
     document.addEventListener('pointerdown', (down) => {
@@ -592,7 +601,7 @@ def book_grid(kind: str, columns: list[dict]) -> None:
         'ensureDomOrder': True,
         'includeHiddenColumnsInQuickFilter': True,
         'suppressDragLeaveHidesColumns': True,  # columns are only hidden with the x in their heading
-    }, auto_size_columns=False).classes('w-full term-book-grid')
+    }, auto_size_columns=False).classes('w-full term-book-grid term-fit')
     search.on_value_change(lambda e: grid.run_grid_method('setGridOption', 'quickFilterText', e.value or ''))
     grid.on('rowDoubleClicked', lambda e: open_editor(kind, e.args, refresh),
             js_handler=f'(e) => {{ if (window.innerWidth >= {MOBILE_WIDTH}) emit(e.data.BookID) }}')
@@ -775,7 +784,7 @@ def index_page(active: str, table: str, singular: str) -> None:
             'stopEditingWhenCellsLoseFocus': True,
             'enableCellTextSelection': True,
             'ensureDomOrder': True,
-        }).style('height: calc(100vh - 290px); min-height: 320px; max-width: 720px').classes('grow')
+        }).style('min-height: 320px; max-width: 720px').classes('grow term-fit')
         detail = ui.column().classes('gap-1 min-w-[300px]')
     search.on_value_change(lambda e: grid.run_grid_method('setGridOption', 'quickFilterText', e.value or ''))
     grid.on('rowClicked', lambda e: show(e.args['data']), ['data'])
@@ -940,9 +949,8 @@ def reading_history_page() -> None:
             'rowSelection': {'mode': 'singleRow', 'checkboxes': False, 'enableClickSelection': True},
             'enableCellTextSelection': True,
             'ensureDomOrder': True,
-        }).style('height: calc(100vh - 290px); min-height: 320px; max-width: 1100px').classes(
-            'grow term-history-grid')
-        detail = ui.column().classes('gap-1 min-w-[300px]')
+        }).style('min-height: 320px; max-width: 1100px').classes('grow term-fit')
+        detail = ui.column().classes('gap-1 min-w-[300px] term-detail')
     search.on_value_change(lambda e: grid.run_grid_method('setGridOption', 'quickFilterText', e.value or ''))
     grid.on('rowClicked', lambda e: show(e.args['data']), ['data'])
     refresh()
