@@ -1,7 +1,7 @@
 # Joey's Library
 
 A home library app in the style of an old green-screen terminal. Add books (with ISBN lookup), filter the
-collection on any column, keep track of lent-out books and the wishlist, see reading statistics, and back
+collection on any column, keep track of books on loan and the wishlist, see reading statistics, and back
 the database up to Dropbox with one click.
 
 Everything is stored in one SQLite file: `~/.local/share/joey-library/library.db`.
@@ -31,11 +31,13 @@ Your books are not in this folder (see below), so updating never touches them.
 
 | Menu | What it does |
 |---|---|
-| INSERT BOOK | Type or scan the ISBN and press Enter: title, authors and pages are filled in from the book databases (see *Book lookup* below). Choose LIBRARY or WISHLIST at the top. In AUTHOR(S) and GENRES, type a new name and press Enter to add it; put the main author first. |
-| BOOKS | Every book you own. Type in the box under a column heading to filter that column (number columns accept `>`, `<` and ranges through the filter icon). The search box searches all columns. Double-click a row to edit, lend, or delete the book. |
-| RENTED OUT | Books currently lent out, oldest loan first. Loans of 60 days or more are marked `!`. Lend a book at the bottom. |
+| INSERT BOOK | Type or scan the ISBN and press Enter: title, authors and pages are filled in from the book databases (see *Book lookup* below). Choose LIBRARY or WISHLIST at the top. In AUTHOR(S), GENRES and TAGS, type a new name and press Enter to add it; put the main author first. |
+| BOOKS | Every book you own. Type in the box under a column heading to filter that column (number columns accept `>`, `<` and ranges through the filter icon). The search box searches all columns. Double-click a row to edit, check out, or delete the book. The SERIAL column, always the first one, numbers library books L0001, L0002, ... and wishlist books W0001, ... Drag headings to reorder the columns; the `x` in a heading hides that column (the buttons above the table bring it back); right-click a heading to freeze it on the left, right-click again to unfreeze it, or drag it out of the frozen columns. All of this is remembered. STARTED and FINISHED show the latest reading, TIMES READ how many readings were finished. SPICE and KINK are ratings from 0 to 5. |
+| ON LOAN | Books currently on loan, oldest loan first. Loans of 60 days or more are marked `!`. Check out a book to a borrower at the bottom. |
 | WISHLIST | Books you want. Double-click one and press BOUGHT IT to move it into the library. |
-| STATISTICS | Books and pages read per year and month, genres, authors, and a summary of the whole library. |
+| READING HISTORY | Every time a book was read, newest first. Click one to change its dates or delete it. To read a book again, open it and press NEW READING: the old dates move into the history and a new reading starts today. |
+| AUTHORS, GENRES, TAGS, SERIES, FORMATS, EDITIONS | The lists the books use. Add, rename (renaming to an existing name merges the two) or delete entries, and see which books use one. TAGS are your own labels, for anything genres do not cover. Drag them in the menu (press and hold on a phone) to change their order; it is remembered. |
+| STATISTICS | Books and pages read per year and month, genres, authors, and a summary of the whole library. Every finished reading counts, so a book read twice counts twice; RE-READS and MOST RE-READ show those. |
 | SETTINGS | Dropbox backup folder, how many dated copies to keep, backup on close, the title at the top of the screen, the yearly reading goal, and the colours (GREEN PHOSPHOR is the standard, DAEMON CYAN matches the Daemon-2.0 icon theme, or pick your own text and background colour). |
 
 ## Book lookup

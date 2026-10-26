@@ -1,4 +1,5 @@
 """The library user interface: one NiceGUI page per menu item."""
+import html
 import re
 from datetime import date, datetime
 from pathlib import Path
@@ -15,20 +16,28 @@ ui.add_css(HERE / 'static' / 'terminal.css', shared=True)
 MENU = [
     ('INSERT BOOK', '/insert'),
     ('BOOKS', '/'),
-    ('RENTED OUT', '/loans'),
+    ('ON LOAN', '/loans'),
     ('WISHLIST', '/wishlist'),
     ('STATISTICS', '/stats'),
     'INDEXES',
+    ('READING HISTORY', '/reading-history'),
     ('AUTHORS', '/authors'),
     ('GENRES', '/genres'),
+    ('TAGS', '/tags'),
     ('SERIES', '/series'),
     ('FORMATS', '/formats'),
     ('EDITIONS', '/editions'),
     'SYSTEM',
     ('SETTINGS', '/settings'),
 ]
+MOBILE_WIDTH = 768  # narrower than this is laid out for phones (see terminal.css)
+PHONE_TITLE_WIDTH = 140  # starting width of the Title column on a phone; dragging its edge changes it
 KIND_NAMES = {'owned': 'LIBRARY', 'wished': 'WISHLIST'}
 RATINGS = {None: '-', 0: '0', 1: '* (1)', 2: '** (2)', 3: '*** (3)', 4: '**** (4)', 5: '***** (5)'}
+CHILI = '\U0001F336'
+SPICE = {None: '-', 0: '0  (NOT SPICY)', **{n: f'{CHILI * n}  ({n})' for n in range(1, 6)}}
+CHAINS = '\u26D3'
+KINK = {None: '-', 0: '0  (NOT KINKY)', **{n: f'{CHAINS * n}  ({n})' for n in range(1, 6)}}
 
 
 def button(text: str, on_click=None, danger: bool = False) -> ui.button:
@@ -71,24 +80,138 @@ def apply_theme(settings: dict) -> None:
               positive=text, negative='#ff5a4a', warning='#ffb642', info=text)
 
 
+def menu_sections(settings: dict) -> list[tuple[str | None, list[tuple[str, str]]]]:
+    """MENU as (section, entries); the INDEXES come in the order they were dragged into."""
+    sections = [(None, [])]
+    for entry in MENU:
+        if isinstance(entry, str):
+            sections.append((entry, []))
+        else:
+            sections[-1][1].append(entry)
+    saved = settings.get('index_order', [])
+    for name, entries in sections:
+        if name == 'INDEXES':  # ones not in the saved order (new in a later version) go last
+            entries.sort(key=lambda e: saved.index(e[0]) if e[0] in saved else len(saved))
+    return sections
+
+
 def shell() -> None:
     """Header and left menu, built once per window; the pages below only swap the content under them."""
     settings = backup.load_settings()
     apply_theme(settings)
     ui.dark_mode(True)
-    with ui.header().classes('term-header'):
+    with ui.header().classes('term-header items-center no-wrap gap-3'):
+        burger = ui.button(icon='menu').props('flat dense').classes('term-burger')  # only shown on phones
         with ui.column().classes('gap-0'):
             banner = ui.label().classes('term-banner')
             status = ui.label().classes('term-status')
     links = {}
-    with ui.left_drawer(value=True, fixed=True).props('width=250 behavior=desktop').classes('term-drawer'):
-        for entry in MENU:
-            if isinstance(entry, str):
-                ui.label(f'-- {entry} --').classes('term-menu-section')
-                continue
-            label, path = entry
-            links[label] = ui.link(f'> {label}', path).classes('term-menu')
+    # docked on wide screens; below 768 px it hides and slides in over the page from the burger button
+    with ui.left_drawer(value=None, fixed=True).props(f'width=250 breakpoint={MOBILE_WIDTH - 1}').classes('term-drawer') as drawer:
+        for name, entries in menu_sections(settings):
+            if name:
+                ui.label(f'-- {name} --').classes('term-menu-section')
+            with ui.element('div') as group:
+                for label, path in entries:
+                    links[label] = ui.link(f'> {label}', path).classes('term-menu').props(
+                        f'draggable=false data-label="{label}"')
+                    links[label].on('click', drawer.hide,
+                                    js_handler=f'() => {{ if (window.innerWidth < {MOBILE_WIDTH}) emit() }}')
+            if name == 'INDEXES':  # dragged into another order by window.termSortable below
+                group.classes('term-sortable').props('title="Drag to change the order"')
+                group.on('reorder', lambda e, group=group: save_index_order(e.args['detail'], group), ['detail'])
         ui.label(f'{date.today():%Y-%m-%d}  //  TERMINAL READY').classes('term-hint')
+    burger.on_click(drawer.toggle)
+
+    def save_index_order(order: list[str], group: ui.element) -> None:
+        current = backup.load_settings()
+        current['index_order'] = order
+        backup.save_settings(current)
+        for i, label in enumerate(order):  # the browser has moved them already; keep the server's copy the same
+            links[label].move(group, target_index=i)
+
+    ui.add_body_html('''<script>
+    // the INDEXES in the menu: drag one with the mouse (press and hold on a phone) to move it; the order is
+    // then sent to the server, which saves it
+    document.addEventListener('pointerdown', (down) => {
+      const item = down.target.closest('.term-sortable > .term-menu');
+      if (!item || down.button !== 0) return;
+      const list = item.parentElement;
+      let dragging = false, moved = false;
+      const start = () => { dragging = true; item.classList.add('dragging'); };
+      const hold = down.pointerType === 'mouse' ? null : setTimeout(start, 350);
+      const move = (e) => {
+        if (!dragging) {
+          if (Math.abs(e.clientY - down.clientY) < 6) return;
+          if (hold) return finish();  // a finger that moves straight away is scrolling the menu
+          start();
+        }
+        e.preventDefault();
+        for (const other of list.children) {
+          const r = other.getBoundingClientRect();
+          if (other === item || e.clientY < r.top || e.clientY > r.bottom) continue;
+          list.insertBefore(item, e.clientY < r.top + r.height / 2 ? other : other.nextSibling);
+          moved = true;
+        }
+      };
+      const noScroll = (e) => { if (dragging) e.preventDefault(); };
+      const finish = () => {
+        clearTimeout(hold);
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', finish);
+        document.removeEventListener('pointercancel', finish);
+        document.removeEventListener('touchmove', noScroll);
+        item.classList.remove('dragging');
+        if (!moved) return;
+        // the click that ends a drag must not open the page
+        const swallow = (c) => { c.preventDefault(); c.stopImmediatePropagation(); };
+        window.addEventListener('click', swallow, true);
+        setTimeout(() => window.removeEventListener('click', swallow, true), 0);
+        list.dispatchEvent(new CustomEvent('reorder', {detail: [...list.children].map(c => c.dataset.label)}));
+      };
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', finish);
+      document.addEventListener('pointercancel', finish);
+      document.addEventListener('touchmove', noScroll, {passive: false});
+    });
+    // the grid API of the book table a heading belongs to
+    const termGridApi = (el) => {
+      while (el && !/^c\\d+$/.test(el.id)) el = el.parentElement;  // the NiceGUI element around the grid
+      return getElement(el.id.slice(1)).api;
+    };
+    // the x in a heading: hide that column
+    window.termHideColumn = (el, field) => termGridApi(el).setColumnsVisible([field], false);
+    // right-click (press and hold on a phone) on a heading: a small menu to freeze or unfreeze the column
+    window.termColumnMenu = (event, el, field) => {
+      event.preventDefault();
+      document.querySelectorAll('.term-col-menu').forEach(m => m.remove());
+      const api = termGridApi(el);
+      if (api.getColumn(field).getColDef().lockPosition) return;  // Serial: always first and frozen
+      const frozen = !!api.getColumn(field).getPinned();
+      const menu = document.createElement('div');
+      menu.className = 'term-col-menu';
+      menu.style.left = Math.min(event.clientX, window.innerWidth - 220) + 'px';
+      menu.style.top = event.clientY + 'px';
+      const item = document.createElement('div');
+      item.textContent = frozen ? '> UNFREEZE COLUMN' : '> FREEZE COLUMN';
+      item.onclick = () => { termFreeze(api, field, !frozen); menu.remove(); };
+      menu.appendChild(item);
+      document.body.appendChild(menu);
+      setTimeout(() => document.addEventListener('pointerdown', function close(e) {
+        if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('pointerdown', close); }
+      }), 0);
+    };
+    // freezing puts the column leftmost among the frozen ones (after Serial, which is always first);
+    // unfreezing puts it right after them
+    window.termFreeze = (api, field, freeze) => {
+      const state = api.getColumnState();
+      const [column] = state.splice(state.findIndex(s => s.colId === field), 1);
+      column.pinned = freeze ? 'left' : null;
+      const locked = state.filter(s => api.getColumn(s.colId).getColDef().lockPosition).length;
+      state.splice(freeze ? locked : state.filter(s => s.pinned).length, 0, column);
+      api.applyColumnState({state, applyOrder: true});
+    };
+    </script>''')
     ui.context.client.shell = {'banner': banner, 'status': status, 'links': links}
 
 
@@ -132,6 +255,9 @@ class BookForm:
             self.genres = ui.select(db.names('Genres'), label='GENRES  - ENTER adds a new genre',
                                     multiple=True, with_input=True, new_value_mode='add-unique',
                                     value=b.get('GenreList', [])).props('use-chips hide-dropdown-icon').classes('w-full')
+            self.tags = ui.select(db.names('Tags'), label='TAGS  - your own labels, ENTER adds a new tag',
+                                  multiple=True, with_input=True, new_value_mode='add-unique',
+                                  value=b.get('TagList', [])).props('use-chips hide-dropdown-icon').classes('w-full')
             with ui.element('div').classes('grid grid-cols-1 md:grid-cols-4 gap-x-6 w-full'):
                 self.edition = ui.input('EDITION', value=b.get('Edition') or '')
                 self.format = ui.select(db.names('Formats'), label='FORMAT', with_input=True, clearable=True,
@@ -139,6 +265,8 @@ class BookForm:
                 self.series = ui.select(db.names('Series'), label='SERIES', with_input=True, clearable=True,
                                         new_value_mode='add-unique', value=b.get('SeriesTitle'))
                 self.number_in_series = ui.number('NO. IN SERIES', value=b.get('NumberInSeries'), min=0)
+                self.spice = ui.select(SPICE, label='SPICE', value=b.get('Spice'))
+                self.kink = ui.select(KINK, label='KINK', value=b.get('Kink'))
             self.signed = ui.checkbox('SIGNED', value=bool(b.get('Signed')))
             self.owned_box = ui.column().classes('w-full gap-1')
             with self.owned_box:
@@ -146,14 +274,54 @@ class BookForm:
                     self.pages = ui.number('PAGES', value=b.get('PageCount'), min=0, precision=0)
                     self.shelf = ui.number('SHELF NO.', value=b.get('ShelfNumber'), min=0, precision=0)
                     self.rating = ui.select(RATINGS, label='RATING', value=b.get('Rating'))
-                    ui.element('div')
-                    self.started = ui.input('STARTED', value=b.get('StartedDate') or '').props('type=date stack-label')
-                    self.finished = ui.input('FINISHED', value=b.get('FinishedDate') or '').props('type=date stack-label')
+                # the reading history: earlier readings above, the current (newest) one in STARTED / FINISHED
+                readings = b.get('Readings', [])
+                current = readings[-1] if readings else {}
+                self.history_box = ui.column().classes('w-full gap-0')
+                with ui.row().classes('items-end gap-x-6 gap-y-1'):
+                    self.started = ui.input('STARTED', value=current.get('StartedDate') or '').props('type=date stack-label')
+                    self.finished = ui.input('FINISHED', value=current.get('FinishedDate') or '').props('type=date stack-label')
+                    button('NEW READING', self.new_reading).tooltip(
+                        'Reading it again: the dates above go into the reading history and a new reading starts today')
                 with ui.row().classes('gap-6'):
                     self.read = ui.checkbox('READ', value=bool(b.get('Read')))
                     self.edge = ui.checkbox('SPRAYED EDGES', value=bool(b.get('EdgeOut')))
                 self.comments = ui.textarea('COMMENTS', value=b.get('Comments') or '').props('autogrow').classes('w-full')
+        self.show_earlier(readings[:-1])
         self.set_kind(kind)
+
+    def show_earlier(self, readings: list[dict]) -> None:
+        """List the earlier readings, each with its own dates and an X to delete it."""
+        self.history_box.clear()
+        self.earlier = []
+        with self.history_box:
+            if readings:
+                ui.label(f'EARLIER READINGS ({len(readings)})').classes('term-dim mt-2')
+            for r in readings:
+                with ui.row().classes('items-end gap-x-6 gap-y-1'):
+                    pair = (ui.input('STARTED', value=r.get('StartedDate') or '').props('type=date stack-label'),
+                            ui.input('FINISHED', value=r.get('FinishedDate') or '').props('type=date stack-label'))
+                    button('X', lambda pair=pair: self.remove_earlier(pair), danger=True).tooltip('Delete this reading')
+                self.earlier.append(pair)
+
+    def earlier_values(self) -> list[dict]:
+        return [{'StartedDate': s.value or None, 'FinishedDate': f.value or None} for s, f in self.earlier]
+
+    def remove_earlier(self, pair: tuple) -> None:
+        self.show_earlier([r for p, r in zip(self.earlier, self.earlier_values()) if p is not pair])
+
+    def current_reading(self) -> dict:
+        return {'StartedDate': self.started.value or None, 'FinishedDate': self.finished.value or None}
+
+    def new_reading(self) -> None:
+        """Reading the book again: the current dates join the history and a new reading starts today."""
+        earlier = self.earlier_values()
+        if any(self.current_reading().values()):
+            earlier.append(self.current_reading())
+        self.show_earlier(earlier)
+        self.started.value = date.today().isoformat()
+        self.finished.value = ''
+        ui.notify('NEW READING STARTED. SAVE TO KEEP IT.')
 
     def set_kind(self, kind: str) -> None:
         self.kind = kind
@@ -213,6 +381,9 @@ class BookForm:
             'Title': title,
             'AuthorList': list(self.authors.value),
             'GenreList': list(self.genres.value or []),
+            'TagList': list(self.tags.value or []),
+            'Spice': self.spice.value,
+            'Kink': self.kink.value,
             'Edition': (self.edition.value or '').strip() or None,
             'FormatName': self.format.value,
             'SeriesTitle': self.series.value,
@@ -221,14 +392,14 @@ class BookForm:
             'ISBN': (self.isbn.value or '').strip() or None,
         }
         if self.kind == 'owned':
-            finished = self.finished.value or None
+            readings = [r for r in self.earlier_values() + [self.current_reading()] if any(r.values())]
             data.update({
                 'PageCount': number(self.pages.value),
                 'ShelfNumber': number(self.shelf.value),
                 'Rating': self.rating.value,
-                'StartedDate': self.started.value or None,
-                'FinishedDate': finished,
-                'Read': int(bool(self.read.value or finished)),  # a finished date means it has been read
+                'Readings': readings,
+                # a finished reading means it has been read
+                'Read': int(bool(self.read.value or any(r['FinishedDate'] for r in readings))),
                 'EdgeOut': int(bool(self.edge.value)),
                 'Comments': (self.comments.value or '').strip() or None,
                 # loans are changed on their own buttons; keep whatever the book had
@@ -240,12 +411,15 @@ class BookForm:
     def clear(self) -> None:
         for field in (self.isbn, self.title, self.edition, self.started, self.finished, self.comments):
             field.value = ''
-        for field in (self.format, self.series, self.number_in_series, self.pages, self.shelf, self.rating):
+        for field in (self.format, self.series, self.number_in_series, self.pages, self.shelf, self.rating, self.spice,
+                      self.kink):
             field.value = None
         for field in (self.signed, self.read, self.edge):
             field.value = False
         self.authors.set_options(db.names('Authors'), value=[])
         self.genres.set_options(db.names('Genres'), value=[])
+        self.tags.set_options(db.names('Tags'), value=[])
+        self.show_earlier([])
         self.format.set_options(db.names('Formats'), value=None)
         self.series.set_options(db.names('Series'), value=None)
         self.status.set_text('')
@@ -253,7 +427,7 @@ class BookForm:
 
 
 def open_editor(kind: str, book_id: int, on_change) -> None:
-    """Edit one book in a dialog, with lend/return, 'bought it' and delete."""
+    """Edit one book in a dialog, with check-out/return, 'bought it' and delete."""
     book = db.get_book(kind, book_id)
 
     def done(message: str) -> None:
@@ -279,24 +453,26 @@ def open_editor(kind: str, book_id: int, on_change) -> None:
             ui.notify('WHO IS BORROWING IT?', type='warning')
             return
         db.lend(book_id, borrower.value, lend_date.value or None)
-        done(f"{book['Title'].upper()} LENT TO {borrower.value.upper()}.")
+        done(f"{book['Title'].upper()} IS NOW ON LOAN TO {borrower.value.upper()}.")
 
     with ui.dialog() as dialog, ui.card().classes('term-card w-full max-w-5xl'):
-        ui.label(f'> RECORD #{book_id:04d}  //  {KIND_NAMES[kind]}').classes('term-sub')
+        with ui.row().classes('w-full items-center justify-between no-wrap term-title-row'):
+            ui.label(f'> RECORD {db.serial(kind, book_id)}  //  {KIND_NAMES[kind]}').classes('term-sub')
+            button('CLOSE', dialog.close).classes('narrow-only')  # the editor fills a phone screen
         ui.element('div').classes('term-rule')
         form = BookForm(kind, book)
         ui.element('div').classes('term-rule')
         if kind == 'owned':
             if book.get('LoanedTo'):
                 with ui.row().classes('items-center gap-4'):
-                    ui.label(f"LENT TO {book['LoanedTo'].upper()} SINCE {book['LoanedDate'] or '?'}").classes('term-warn')
+                    ui.label(f"ON LOAN TO {book['LoanedTo'].upper()} SINCE {book['LoanedDate'] or '?'}").classes('term-warn')
                     button('RETURNED', lambda: (db.return_book(book_id), done(f"{book['Title'].upper()} IS BACK ON THE SHELF.")))
             else:
                 with ui.row().classes('items-end gap-4 w-full'):
-                    borrower = ui.select(db.borrowers(), label='LEND TO', with_input=True,
+                    borrower = ui.select(db.borrowers(), label='BORROWER', with_input=True,
                                          new_value_mode='add-unique').classes('min-w-[220px]')
                     lend_date = ui.input('DATE', value=date.today().isoformat()).props('type=date stack-label')
-                    button('LEND', lend)
+                    button('CHECK OUT', lend)
         with ui.row().classes('gap-2 flex-wrap'):
             button('SAVE', save)
             if kind == 'wished':
@@ -327,6 +503,15 @@ def insert_page(kind: str = 'owned') -> None:
         button('CLEAR', form.clear)
 
 
+def in_saved_order(columns: list[dict], saved: list[str]) -> list[dict]:
+    """Put the columns in the order last dragged into; columns added since keep their place next to their neighbours."""
+    known = sorted((c for c in columns if c['field'] in saved), key=lambda c: saved.index(c['field']))
+    for i, column in enumerate(columns):
+        if column['field'] not in saved:
+            known.insert(known.index(columns[i - 1]) + 1 if i else 0, column)  # straight after its left neighbour
+    return known
+
+
 def book_grid(kind: str, columns: list[dict]) -> None:
     """Search box plus a grid with a filter under every column header; double-click a row to edit."""
     def rows() -> list[dict]:
@@ -341,16 +526,48 @@ def book_grid(kind: str, columns: list[dict]) -> None:
         grid.update()
         count.set_text(f"{len(grid.options['rowData'])} RECORDS")
 
-    # put the columns in the order last dragged into on this page; new or unknown columns go last
-    saved = backup.load_settings().get('column_order', {}).get(kind, [])
-    columns = sorted(columns, key=lambda c: saved.index(c['field']) if c['field'] in saved else len(saved))
+    settings = backup.load_settings()
+    # Serial is always the leftmost column: frozen, and nothing can be moved or frozen to the left of it
+    columns.insert(0, {'headerName': 'Serial', 'field': 'BookID', 'minWidth': 70,
+                       'lockPosition': 'left', 'lockPinned': True, 'suppressMovable': True,
+                       # shown as L0012 / W0003 (see db.serial); the database keeps the plain number
+                       ':valueGetter': f'p => "{db.ID_PREFIX[kind]}" + String(p.data.BookID).padStart({db.SERIAL_DIGITS}, "0")'})
+    columns = in_saved_order(columns, settings.get('column_order', {}).get(kind, []))
+    frozen = settings.get('frozen_columns', {}).get(kind, DEFAULT_FROZEN)
+    for c in columns:
+        c['pinned'] = 'left' if c['field'] in frozen or c['field'] == 'BookID' else None
 
-    async def save_order(e) -> None:
-        if not e.args.get('finished'):  # still dragging
-            return
-        state = await grid.run_grid_method('getColumnState')
+    # hidden columns: an x in each heading hides one, the buttons above the table bring them back
+    names = {c['field']: c['headerName'] for c in columns}
+    hidden = [f for f in settings.get('hidden_columns', {}).get(kind, []) if f in names]
+    for c in columns:
+        c['hide'] = c['field'] in hidden
+        c['headerComponentParams'] = {'template': HEADER_TEMPLATE.format(field=c['field'])}
+
+    def save_hidden(e) -> None:
+        hidden[:] = e.args
         current = backup.load_settings()
-        current.setdefault('column_order', {})[kind] = [c['colId'] for c in state]
+        current.setdefault('hidden_columns', {})[kind] = hidden
+        backup.save_settings(current)
+        show_hidden()
+
+    def show_columns(fields: list[str]) -> None:
+        grid.run_grid_method('setColumnsVisible', fields, True)  # the columnVisible event saves and redraws
+
+    def show_hidden() -> None:
+        hidden_bar.clear()
+        with hidden_bar:
+            if hidden:
+                ui.label('HIDDEN:').classes('term-dim')
+                for field in hidden:
+                    button(f'+ {names[field].upper()}', lambda f=field: show_columns([f]))
+                button('SHOW ALL', lambda: show_columns(list(hidden)))
+
+    def save_layout(e) -> None:
+        """Remember the column order and which columns are frozen."""
+        current = backup.load_settings()
+        current.setdefault('column_order', {})[kind] = e.args['order']
+        current.setdefault('frozen_columns', {})[kind] = e.args['frozen']
         backup.save_settings(current)
 
     with ui.row().classes('w-full items-end gap-4'):
@@ -358,7 +575,12 @@ def book_grid(kind: str, columns: list[dict]) -> None:
         count = ui.label('').classes('term-dim')
         if kind == 'wished':
             button('ADD TO WISHLIST', lambda: ui.navigate.to('/insert?kind=wished'))
-    ui.label('TYPE IN THE BOXES UNDER THE HEADINGS TO FILTER A COLUMN  //  DOUBLE-CLICK A ROW TO OPEN IT').classes('term-faint')
+    ui.label('TYPE IN THE BOXES UNDER THE HEADINGS TO FILTER A COLUMN  //  DOUBLE-CLICK A ROW TO OPEN IT  //  '
+             'RIGHT-CLICK A HEADING TO FREEZE IT ON THE LEFT').classes('term-faint wide-only')
+    ui.label('SWIPE THE TABLE SIDEWAYS FOR MORE COLUMNS  //  DRAG THE EDGE OF A HEADING TO RESIZE IT  //  '
+             'PRESS AND HOLD A HEADING TO FREEZE IT  //  TAP A BOOK TO OPEN IT').classes('term-faint narrow-only')
+    hidden_bar = ui.row().classes('items-center gap-2')
+    show_hidden()
     grid = ui.aggrid({
         'defaultColDef': {'filter': 'agTextColumnFilter', 'floatingFilter': True, 'sortable': True,
                           'resizable': True, 'minWidth': 90, 'suppressHeaderMenuButton': True},
@@ -368,35 +590,86 @@ def book_grid(kind: str, columns: list[dict]) -> None:
         'animateRows': False,
         'enableCellTextSelection': True,
         'ensureDomOrder': True,
-    }, auto_size_columns=False).classes('w-full').style('height: calc(100vh - 290px); min-height: 320px')
+        'includeHiddenColumnsInQuickFilter': True,
+        'suppressDragLeaveHidesColumns': True,  # columns are only hidden with the x in their heading
+    }, auto_size_columns=False).classes('w-full term-book-grid')
     search.on_value_change(lambda e: grid.run_grid_method('setGridOption', 'quickFilterText', e.value or ''))
-    grid.on('rowDoubleClicked', lambda e: open_editor(kind, e.args['data']['BookID'], refresh), ['data'])
-    grid.on('columnMoved', save_order, ['finished'])
+    grid.on('rowDoubleClicked', lambda e: open_editor(kind, e.args, refresh),
+            js_handler=f'(e) => {{ if (window.innerWidth >= {MOBILE_WIDTH}) emit(e.data.BookID) }}')
+    layout = f'''const s = getElement({grid.id}).api.getColumnState();
+        emit({{order: s.map(c => c.colId), frozen: s.filter(c => c.pinned).map(c => c.colId)}});'''
+    grid.on('columnMoved', save_layout, js_handler=f'(e) => {{ if (e.finished) {{ {layout} }} }}')  # not while dragging
+    grid.on('columnPinned', save_layout, js_handler=f'() => {{ {layout} }}')  # frozen by the menu or by dragging
+    grid.on('columnVisible', save_hidden, js_handler=f'''() => emit(
+        getElement({grid.id}).api.getColumns().filter(c => !c.isVisible()).map(c => c.getColId()))''')
+    grid.on('rowClicked', lambda e: open_editor(kind, e.args, refresh),
+            js_handler=f'(e) => {{ if (window.innerWidth < {MOBILE_WIDTH}) emit(e.data.BookID) }}')
+    async def save_phone_title_width(e) -> None:
+        current = backup.load_settings()
+        current['phone_title_width'] = int(e.args)
+        backup.save_settings(current)
+
+    # on a phone: every column, scrolled sideways; Title starts narrow, and any heading's edge can be dragged
+    title_width = backup.load_settings().get('phone_title_width', PHONE_TITLE_WIDTH)
+    grid.on('firstDataRendered', js_handler=f'''() => {{
+        if (window.innerWidth >= {MOBILE_WIDTH}) return;
+        const api = getElement({grid.id}).api;
+        api.setGridOption('floatingFiltersHeight', 0);
+        setTimeout(() => {{  // after the grid's own fit-to-contents sizing, which runs after this event
+            api.getColumns().forEach(c => {{ if (c.getActualWidth() > 220) api.setColumnWidths([{{key: c, newWidth: 220}}]); }});
+            api.setColumnWidths([{{key: 'Title', newWidth: {title_width}}}]);
+        }}, 100);
+    }}''')
+    grid.on('columnResized', save_phone_title_width, js_handler=f'''(e) => {{
+        if (window.innerWidth < {MOBILE_WIDTH} && e.finished && e.source === 'uiColumnResized' && e.colId === 'Title')
+            emit(getElement({grid.id}).api.getColumn('Title').getActualWidth());
+    }}''')
     refresh()
 
 
+# AG Grid's own heading layout (laid out right to left) plus an x on the right that hides the column and a
+# right-click menu to freeze it (window.termHideColumn and termColumnMenu, added in shell())
+HEADER_TEMPLATE = '''<div class="ag-cell-label-container" role="presentation"
+     oncontextmenu="termColumnMenu(event, this, '{field}')">
+  <span class="term-col-hide" title="Hide this column" role="button"
+        onclick="event.stopPropagation(); termHideColumn(this, '{field}')">x</span>
+  <span data-ref="eMenu" class="ag-header-icon ag-header-cell-menu-button" aria-hidden="true"></span>
+  <span data-ref="eFilterButton" class="ag-header-icon ag-header-cell-filter-button" aria-hidden="true"></span>
+  <div data-ref="eLabel" class="ag-header-cell-label" role="presentation">
+    <span data-ref="eText" class="ag-header-cell-text"></span>
+    <span data-ref="eFilter" class="ag-header-icon ag-header-label-icon ag-filter-icon" aria-hidden="true"></span>
+    <ag-sort-indicator data-ref="eSortIndicator"></ag-sort-indicator>
+  </div>
+</div>'''
+DEFAULT_FROZEN = ['Title']  # frozen next to Serial (which always is) until the user changes it
 NUM = {'filter': 'agNumberColumnFilter'}
 STARS = {':valueFormatter': 'p => p.value == null ? "" : "*".repeat(p.value)', **NUM}
+CHILIES = {':valueFormatter': f'p => p.value == null ? "" : p.value == 0 ? "0" : "{CHILI}".repeat(p.value)', **NUM}
+LINKS = {':valueFormatter': f'p => p.value == null ? "" : p.value == 0 ? "0" : "{CHAINS}".repeat(p.value)', **NUM}
 
 
 def books_page() -> None:
     frame('BOOKS')
     book_grid('owned', [
-        {'headerName': 'Title', 'field': 'Title', 'pinned': 'left', 'minWidth': 200},
+        {'headerName': 'Title', 'field': 'Title', 'minWidth': 60},
         {'headerName': 'Authors', 'field': 'Authors'},
         {'headerName': 'Series', 'field': 'SeriesTitle'},
         {'headerName': '#', 'field': 'NumberInSeries', **NUM},
         {'headerName': 'Genres', 'field': 'Genres'},
+        {'headerName': 'Tags', 'field': 'Tags'},
         {'headerName': 'Format', 'field': 'FormatName'},
         {'headerName': 'Pages', 'field': 'PageCount', **NUM},
         {'headerName': 'Rating', 'field': 'Rating', **STARS},
+        {'headerName': 'Spice', 'field': 'Spice', **CHILIES},
+        {'headerName': 'Kink', 'field': 'Kink', **LINKS},
         {'headerName': 'Read', 'field': 'ReadText'},
+        {'headerName': 'Times read', 'field': 'TimesRead', **NUM},
         {'headerName': 'Started', 'field': 'StartedDate'},
         {'headerName': 'Finished', 'field': 'FinishedDate'},
         {'headerName': 'Shelf', 'field': 'ShelfNumber', **NUM},
         {'headerName': 'Signed', 'field': 'SignedText'},
         {'headerName': 'Sprayed', 'field': 'EdgeOutText'},
-        {'headerName': 'Lent to', 'field': 'LoanedTo'},
+        {'headerName': 'Borrower', 'field': 'LoanedTo'},
         {'headerName': 'Edition', 'field': 'Edition'},
         {'headerName': 'ISBN', 'field': 'ISBN'},
         {'headerName': 'Comments', 'field': 'Comments', 'maxWidth': 320},
@@ -406,12 +679,15 @@ def books_page() -> None:
 def wishlist_page() -> None:
     frame('WISHLIST')
     book_grid('wished', [
-        {'headerName': 'Title', 'field': 'Title', 'pinned': 'left', 'minWidth': 200},
+        {'headerName': 'Title', 'field': 'Title', 'minWidth': 60},
         {'headerName': 'Authors', 'field': 'Authors'},
         {'headerName': 'Series', 'field': 'SeriesTitle'},
         {'headerName': '#', 'field': 'NumberInSeries', **NUM},
         {'headerName': 'Genres', 'field': 'Genres'},
+        {'headerName': 'Tags', 'field': 'Tags'},
         {'headerName': 'Format', 'field': 'FormatName'},
+        {'headerName': 'Spice', 'field': 'Spice', **CHILIES},
+        {'headerName': 'Kink', 'field': 'Kink', **LINKS},
         {'headerName': 'Edition', 'field': 'Edition'},
         {'headerName': 'Signed', 'field': 'SignedText'},
         {'headerName': 'ISBN', 'field': 'ISBN'},
@@ -459,8 +735,8 @@ def index_page(active: str, table: str, singular: str) -> None:
         with detail:
             ui.label(f"> {row['Name'].upper()}").classes('term-sub')
             ui.label(f'USED BY {len(books)} BOOK(S)').classes('term-dim')
-            for kind, title in books:
-                ui.label(f"  {title}" + ('  (WISHLIST)' if kind == 'wished' else ''))
+            for kind, book_id, title in books:
+                ui.label(f"  {db.serial(kind, book_id)}  {title}" + ('  (WISHLIST)' if kind == 'wished' else ''))
             note = 'THE BOOKS ARE KEPT; THEY JUST LOSE THIS ENTRY.' if books else 'NO BOOKS USE IT.'
             ui.label(note).classes('term-faint mt-2')
             delete_btn = button('DELETE', lambda: delete(delete_btn), danger=True)
@@ -515,6 +791,10 @@ def genres_page() -> None:
     index_page('GENRES', 'Genres', 'GENRE')
 
 
+def tags_page() -> None:
+    index_page('TAGS', 'Tags', 'TAG')
+
+
 def series_page() -> None:
     index_page('SERIES', 'Series', 'SERIES')
 
@@ -528,12 +808,12 @@ def editions_page() -> None:
 
 
 def loans_page() -> None:
-    frame('RENTED OUT')
+    frame('ON LOAN')
     listing = ui.column().classes('w-full gap-0')
-    ui.label('> LEND A BOOK').classes('term-sub')
+    ui.label('> CHECK OUT A BOOK').classes('term-sub')
     with ui.row().classes('items-end gap-4 w-full'):
         book = ui.select({}, label='BOOK', with_input=True).classes('min-w-[340px] grow')
-        borrower = ui.select(db.borrowers(), label='LEND TO', with_input=True, new_value_mode='add-unique').classes('min-w-[220px]')
+        borrower = ui.select(db.borrowers(), label='BORROWER', with_input=True, new_value_mode='add-unique').classes('min-w-[220px]')
         when = ui.input('DATE', value=date.today().isoformat()).props('type=date stack-label')
 
         def lend() -> None:
@@ -541,10 +821,10 @@ def loans_page() -> None:
                 ui.notify('CHOOSE A BOOK AND WHO IS BORROWING IT.', type='warning')
                 return
             db.lend(book.value, borrower.value, when.value or None)
-            ui.notify(f'LENT TO {borrower.value.upper()}.')
+            ui.notify(f'NOW ON LOAN TO {borrower.value.upper()}.')
             book.value = None
             render()
-        button('LEND', lend)
+        button('CHECK OUT', lend)
 
     def returned(book_id: int, title: str) -> None:
         db.return_book(book_id)
@@ -568,29 +848,125 @@ def loans_page() -> None:
                 for b in out:
                     days = (date.today() - date.fromisoformat(b['LoanedDate'])).days if b['LoanedDate'] else None
                     late = days is not None and days >= 60  # no due date in the database; flag long loans
-                    ui.label(b['Title'])
-                    ui.label(b['Authors'] or '')
-                    ui.label(b['LoanedTo'])
-                    ui.label(b['LoanedDate'] or '?')
-                    ui.label('?' if days is None else f"{days}{' !' if late else ''}").classes('term-warn' if late else '')
-                    button('RETURNED', lambda b=b: returned(b['BookID'], b['Title']))
+                    with ui.element('div').classes('loan-row'):
+                        ui.label(b['Title']).classes('loan-title')
+                        ui.label(b['Authors'] or '').props('data-label=AUTHOR')
+                        ui.label(b['LoanedTo']).props('data-label=BORROWER')
+                        ui.label(b['LoanedDate'] or '?').props('data-label=SINCE')
+                        ui.label('?' if days is None else f"{days}{' !' if late else ''}").props('data-label=DAYS').classes(
+                            'term-warn' if late else '')
+                        button('RETURNED', lambda b=b: returned(b['BookID'], b['Title']))
     render()
 
 
+def reading_history_page() -> None:
+    """Every reading of every library book; click one to change its dates or delete it."""
+    frame('READING HISTORY')
+
+    def rows() -> list[dict]:
+        readings = db.list_readings()
+        newest = {}
+        for r in readings:
+            newest[r['BookID']] = max(newest.get(r['BookID'], 0), r['ReadingID'])
+        for r in readings:
+            r['Serial'] = db.serial('owned', r['BookID'])
+            # an unfinished reading is still going only if it is the book's newest; an older one was given up
+            going = not r['FinishedDate'] and r['ReadingID'] == newest[r['BookID']]
+            r['Status'] = 'FINISHED' if r['FinishedDate'] else 'READING' if going and r['StartedDate'] else 'STOPPED'
+            start, end = r['StartedDate'], r['FinishedDate'] or (date.today().isoformat() if going else None)
+            try:
+                r['Days'] = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1 if start and end else None
+            except ValueError:
+                r['Days'] = None
+        return readings
+
+    def refresh() -> None:
+        grid.options['rowData'] = rows()
+        grid.update()
+        count.set_text(f"{len(grid.options['rowData'])} READINGS")
+
+    def show(row: dict) -> None:
+        detail.clear()
+        with detail:
+            ui.label(f"> {row['Serial']}  {row['Title'].upper()}").classes('term-sub')
+            ui.label(f"{row['Authors'] or ''}  //  READING #{row['ReadingNo']}").classes('term-dim')
+            started = ui.input('STARTED', value=row['StartedDate'] or '').props('type=date stack-label')
+            finished = ui.input('FINISHED', value=row['FinishedDate'] or '').props('type=date stack-label')
+
+            def save() -> None:
+                if not started.value and not finished.value:
+                    ui.notify('A READING NEEDS A START OR A FINISH DATE. DELETE IT INSTEAD.', type='warning')
+                    return
+                db.update_reading(row['ReadingID'], started.value, finished.value)
+                ui.notify('READING SAVED.')
+                detail.clear()
+                refresh()
+
+            def delete(btn) -> None:
+                if btn.text != '[ CONFIRM DELETE ]':
+                    btn.set_text('[ CONFIRM DELETE ]')
+                    return
+                db.delete_reading(row['ReadingID'])
+                ui.notify('READING DELETED.')
+                detail.clear()
+                refresh()
+
+            with ui.row().classes('gap-2 mt-2'):
+                button('SAVE', save)
+                delete_btn = button('DELETE', lambda: delete(delete_btn), danger=True)
+            ui.label('NEW READINGS ARE ADDED FROM THE BOOK ITSELF: OPEN IT AND PRESS NEW READING.').classes(
+                'term-faint mt-2')
+
+    with ui.row().classes('w-full items-end gap-4'):
+        search = ui.input('SEARCH').classes('min-w-[220px]')
+        count = ui.label('').classes('term-dim')
+    ui.label('CLICK A READING TO CHANGE ITS DATES OR DELETE IT  //  DAYS COUNTS BOTH THE FIRST AND THE LAST DAY').classes(
+        'term-faint')
+    with ui.row().classes('w-full gap-8 items-start'):
+        grid = ui.aggrid({
+            'defaultColDef': {'sortable': True, 'resizable': True, 'suppressHeaderMenuButton': True,
+                              'filter': 'agTextColumnFilter', 'floatingFilter': True},
+            'columnDefs': [
+                {'headerName': 'Serial', 'field': 'Serial', 'width': 90, 'pinned': 'left'},
+                {'headerName': 'Title', 'field': 'Title', 'flex': 3, 'minWidth': 140},
+                {'headerName': 'Authors', 'field': 'Authors', 'flex': 2, 'minWidth': 120},
+                {'headerName': '#', 'field': 'ReadingNo', 'width': 70, **NUM},
+                {'headerName': 'Started', 'field': 'StartedDate', 'width': 130},
+                {'headerName': 'Finished', 'field': 'FinishedDate', 'width': 130},
+                {'headerName': 'Days', 'field': 'Days', 'width': 90, **NUM},
+                {'headerName': 'Status', 'field': 'Status', 'width': 120},
+            ],
+            'rowData': [],
+            'rowSelection': {'mode': 'singleRow', 'checkboxes': False, 'enableClickSelection': True},
+            'enableCellTextSelection': True,
+            'ensureDomOrder': True,
+        }).style('height: calc(100vh - 290px); min-height: 320px; max-width: 1100px').classes(
+            'grow term-history-grid')
+        detail = ui.column().classes('gap-1 min-w-[300px]')
+    search.on_value_change(lambda e: grid.run_grid_method('setGridOption', 'quickFilterText', e.value or ''))
+    grid.on('rowClicked', lambda e: show(e.args['data']), ['data'])
+    refresh()
+
+
 def bar(value: float, top: float, width: int = 24) -> str:
-    filled = round(value / top * width) if top else 0
-    return '█' * filled + '·' * (width - filled)
+    """A bar exactly `width` characters wide, filled in proportion to value / top."""
+    filled = min(100, value / top * 100) if top else 0
+    return f'<span class="term-bar" style="width: {width}ch"><span style="width: {filled:.1f}%"></span></span>'
 
 
 def stats_text(year: int, goal: int) -> str:
+    """The statistics as monospaced HTML lines (names from the database are escaped)."""
     s = db.stats(year)
     fmt = lambda n: f'{n:,}'.replace(',', '.')  # noqa: E731  Danish thousands separator
     dots = lambda label, value: f"  {label} {'.' * (24 - len(label))} {value}"  # noqa: E731
-    lines = [f'> QUERY READING_LOG --YEAR={year}', '']
+    esc = html.escape
+    lines = [f'&gt; QUERY READING_LOG --YEAR={year}', '']
     pct = min(100, round(s['books'] / goal * 100)) if goal else 0
     lines.append(dots('BOOKS READ', f"{s['books']:<5} GOAL {goal}  [{bar(s['books'], goal or 1, 20) if goal else ''}] {pct}%"))
     lines.append(dots('PAGES READ', fmt(s['pages'])))
     lines.append(dots('AVG PAGES PER BOOK', fmt(round(s['avg_pages'])) if s['avg_pages'] else '-'))
+    lines.append(dots('DIFFERENT TITLES', s['titles']))
+    lines.append(dots('RE-READS', s['rereads']))
     lines.append(dots('AVG RATING', f"{s['avg_rating']:.1f} / 5" if s['avg_rating'] is not None else '-'))
     lines.append(dots('CURRENTLY READING', s['reading']))
     lines += ['', '  MONTH  BOOKS READ                       PAGES']
@@ -601,20 +977,24 @@ def stats_text(year: int, goal: int) -> str:
     if s['genres']:
         lines += ['', f'  GENRES READ IN {year}']
         gtop = s['genres'][0][1]
-        lines += [f"  {g[:20].upper():<20} {bar(n, gtop, 16)} {n:>3}" for g, n in s['genres']]
+        lines += [f"  {esc(f'{g[:20].upper():<20}')} {bar(n, gtop, 16)} {n:>3}" for g, n in s['genres']]
     if s['authors']:
         lines += ['', f'  MOST READ AUTHORS IN {year}']
-        lines += [dots(a[:24].upper(), n) for a, n in s['authors']]
+        lines += [esc(dots(a[:24].upper(), n)) for a, n in s['authors']]
+    if s['most_reread']:
+        lines += ['', '  MOST RE-READ, ALL YEARS']
+        lines += [esc(dots(t[:24].upper(), f'{n} TIMES')) for t, n in s['most_reread']]
     owned_books, owned_pages = s['owned']
     lines += ['', '  LIBRARY ARCHIVE',
               dots('VOLUMES OWNED', f'{fmt(owned_books)}  ({fmt(owned_pages)} PAGES)'),
               dots('NOT YET READ', s['unread']),
-              dots('LENT OUT', s['lent']),
+              dots('READINGS, ALL YEARS', fmt(s['total_readings'])),
+              dots('ON LOAN', s['on_loan']),
               dots('SIGNED', s['signed']),
               dots('SPRAYED EDGES', s['sprayed']),
               dots('ON THE WISHLIST', s['wished'])]
     if s['formats']:
-        lines.append(dots('FORMATS', '  '.join(f'{f.upper()} {n}' for f, n in s['formats'])))
+        lines.append(esc(dots('FORMATS', '  '.join(f'{f.upper()} {n}' for f, n in s['formats']))))
     return '\n'.join(lines)
 
 
@@ -623,8 +1003,8 @@ def stats_page() -> None:
     goal = int(backup.load_settings().get('reading_goal') or 0)
     years = db.stat_years()
     year = ui.select(years, label='YEAR', value=years[0]).classes('w-32')
-    output = ui.label(stats_text(years[0], goal)).classes('term-pre mt-2')
-    year.on_value_change(lambda e: output.set_text(stats_text(e.value, goal)))
+    output = ui.html(stats_text(years[0], goal), sanitize=False).classes('term-pre mt-2')  # stats_text escapes
+    year.on_value_change(lambda e: output.set_content(stats_text(e.value, goal)))
 
 
 def settings_page() -> None:
@@ -793,10 +1173,12 @@ ROUTES = {
     '/wishlist': wishlist_page,
     '/authors': authors_page,
     '/genres': genres_page,
+    '/tags': tags_page,
     '/series': series_page,
     '/formats': formats_page,
     '/editions': editions_page,
     '/loans': loans_page,
+    '/reading-history': reading_history_page,
     '/stats': stats_page,
     '/settings': settings_page,
 }

@@ -14,9 +14,12 @@
 
 PRAGMA foreign_keys = ON;
 
+DROP TABLE IF EXISTS BooksWishedTags;
 DROP TABLE IF EXISTS BooksWishedAuthors;
 DROP TABLE IF EXISTS BooksWishedGenres;
 DROP TABLE IF EXISTS BooksWished;
+DROP TABLE IF EXISTS ReadingHistory;
+DROP TABLE IF EXISTS BooksOwnedTags;
 DROP TABLE IF EXISTS BooksOwnedAuthors;
 DROP TABLE IF EXISTS BooksOwnedGenres;
 DROP TABLE IF EXISTS BooksOwned;
@@ -24,10 +27,17 @@ DROP TABLE IF EXISTS Series;
 DROP TABLE IF EXISTS Formats;
 DROP TABLE IF EXISTS Authors;
 DROP TABLE IF EXISTS Genres;
+DROP TABLE IF EXISTS Tags;
 
 CREATE TABLE Genres (
     GenreID INTEGER PRIMARY KEY,
     GenreName VARCHAR(100) NOT NULL UNIQUE
+);
+
+/* Free-text labels the user makes up, used like genres */
+CREATE TABLE Tags (
+    TagID INTEGER PRIMARY KEY,
+    TagName VARCHAR(100) NOT NULL UNIQUE
 );
 
 CREATE TABLE Authors (
@@ -54,6 +64,8 @@ CREATE TABLE BooksOwned (
     LoanedTo VARCHAR(255),
     LoanedDate TEXT,                                   -- 'YYYY-MM-DD'
     Rating INTEGER CHECK (Rating >= 0 AND Rating <= 5),
+    Spice INTEGER CHECK (Spice >= 0 AND Spice <= 5),
+    Kink INTEGER CHECK (Kink >= 0 AND Kink <= 5),
     Comments TEXT,
     Format INTEGER REFERENCES Formats(FormatID),
     ShelfNumber INTEGER,
@@ -61,9 +73,7 @@ CREATE TABLE BooksOwned (
     SeriesName INTEGER REFERENCES Series(SeriesID),
     Signed INTEGER CHECK (Signed IN (0, 1)),
     EdgeOut INTEGER CHECK (EdgeOut IN (0, 1)),
-    Read INTEGER CHECK (Read IN (0, 1)),
-    StartedDate TEXT,                                  -- 'YYYY-MM-DD'
-    FinishedDate TEXT,                                 -- 'YYYY-MM-DD'
+    Read INTEGER CHECK (Read IN (0, 1)),               -- the dates of each reading are in ReadingHistory
     PageCount INTEGER,
     ISBN VARCHAR(20)
 );
@@ -87,6 +97,24 @@ CREATE TABLE BooksOwnedAuthors (
     FOREIGN KEY (AuthorID) REFERENCES Authors(AuthorID) ON DELETE CASCADE
 );
 
+/* Table to link tags with books (many-to-many relationship) */
+CREATE TABLE BooksOwnedTags (
+    BookID INTEGER,
+    TagID INTEGER,
+    PRIMARY KEY (BookID, TagID),
+    FOREIGN KEY (BookID) REFERENCES BooksOwned(BookID) ON DELETE CASCADE,
+    FOREIGN KEY (TagID) REFERENCES Tags(TagID) ON DELETE CASCADE
+);
+
+/* Every time a library book was read; a book read three times has three rows. The newest row (highest
+   ReadingID) is the book's current reading, shown as STARTED / FINISHED in the book table. */
+CREATE TABLE ReadingHistory (
+    ReadingID INTEGER PRIMARY KEY,
+    BookID INTEGER NOT NULL REFERENCES BooksOwned(BookID) ON DELETE CASCADE,
+    StartedDate TEXT,                                  -- 'YYYY-MM-DD'
+    FinishedDate TEXT                                  -- 'YYYY-MM-DD'
+);
+
 
 /* Wished books sql */
 CREATE TABLE BooksWished (
@@ -97,6 +125,8 @@ CREATE TABLE BooksWished (
     NumberInSeries REAL,
     SeriesName INTEGER REFERENCES Series(SeriesID),
     Signed INTEGER CHECK (Signed IN (0, 1)),
+    Spice INTEGER CHECK (Spice >= 0 AND Spice <= 5),
+    Kink INTEGER CHECK (Kink >= 0 AND Kink <= 5),
     ISBN VARCHAR(20)
 );
 
@@ -116,4 +146,13 @@ CREATE TABLE BooksWishedAuthors (
     PRIMARY KEY (BookID, AuthorID),
     FOREIGN KEY (BookID) REFERENCES BooksWished(BookID) ON DELETE CASCADE,
     FOREIGN KEY (AuthorID) REFERENCES Authors(AuthorID) ON DELETE CASCADE
+);
+
+/* Table to link tags with books (many-to-many relationship) */
+CREATE TABLE BooksWishedTags (
+    BookID INTEGER,
+    TagID INTEGER,
+    PRIMARY KEY (BookID, TagID),
+    FOREIGN KEY (BookID) REFERENCES BooksWished(BookID) ON DELETE CASCADE,
+    FOREIGN KEY (TagID) REFERENCES Tags(TagID) ON DELETE CASCADE
 );
