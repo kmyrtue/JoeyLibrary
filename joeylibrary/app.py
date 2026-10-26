@@ -131,6 +131,18 @@ def shell() -> None:
             links[label].move(group, target_index=i)
 
     ui.add_body_html('''<script>
+    // author columns sort by last name: "Ursula K. Le Guin" under L, "J.R.R. Tolkien" under T; when a book has
+    // several authors the first one counts
+    const termSurnameKey = (names) => {
+      const words = (names || '').split(',')[0].trim().split(/\\s+/).filter(w => !/^(jr|sr|ii|iii|iv)\\.?$/i.test(w));
+      // the last name starts here, taking in a "de", "Le", "St." ... before it; "van" and "von" names go under
+      // the name after them, as in libraries
+      let i = words.length - 1;
+      while (i > 1 && /^(de|del|della|di|da|du|la|le|st\\.?|saint)$/i.test(words[i - 1])) i--;
+      return (words.slice(i).join(' ') + ', ' + words.slice(0, i).join(' ')).toLowerCase();
+    };
+    window.termAuthorCompare = (a, b) =>
+      termSurnameKey(a).localeCompare(termSurnameKey(b)) || (a || '').localeCompare(b || '');
     // tables reach down to the bottom of the window, however tall the text above them came out (fonts differ
     // between systems, and hint lines wrap on narrow windows); checked on resize and a few times a second
     const termFit = () => document.querySelectorAll('.term-fit').forEach(el => {
@@ -652,6 +664,7 @@ HEADER_TEMPLATE = '''<div class="ag-cell-label-container" role="presentation"
 </div>'''
 DEFAULT_FROZEN = ['Title']  # frozen next to Serial (which always is) until the user changes it
 NUM = {'filter': 'agNumberColumnFilter'}
+BY_SURNAME = {':comparator': '(a, b) => termAuthorCompare(a, b)'}  # see shell()
 STARS = {':valueFormatter': 'p => p.value == null ? "" : "*".repeat(p.value)', **NUM}
 CHILIES = {':valueFormatter': f'p => p.value == null ? "" : p.value == 0 ? "0" : "{CHILI}".repeat(p.value)', **NUM}
 LINKS = {':valueFormatter': f'p => p.value == null ? "" : p.value == 0 ? "0" : "{CHAINS}".repeat(p.value)', **NUM}
@@ -661,7 +674,7 @@ def books_page() -> None:
     frame('BOOKS')
     book_grid('owned', [
         {'headerName': 'Title', 'field': 'Title', 'minWidth': 60},
-        {'headerName': 'Authors', 'field': 'Authors'},
+        {'headerName': 'Authors', 'field': 'Authors', **BY_SURNAME},
         {'headerName': 'Series', 'field': 'SeriesTitle'},
         {'headerName': '#', 'field': 'NumberInSeries', **NUM},
         {'headerName': 'Genres', 'field': 'Genres'},
@@ -689,7 +702,7 @@ def wishlist_page() -> None:
     frame('WISHLIST')
     book_grid('wished', [
         {'headerName': 'Title', 'field': 'Title', 'minWidth': 60},
-        {'headerName': 'Authors', 'field': 'Authors'},
+        {'headerName': 'Authors', 'field': 'Authors', **BY_SURNAME},
         {'headerName': 'Series', 'field': 'SeriesTitle'},
         {'headerName': '#', 'field': 'NumberInSeries', **NUM},
         {'headerName': 'Genres', 'field': 'Genres'},
@@ -775,6 +788,7 @@ def index_page(active: str, table: str, singular: str) -> None:
             'defaultColDef': {'sortable': True, 'resizable': True, 'suppressHeaderMenuButton': True},
             'columnDefs': [
                 {'headerName': singular, 'field': 'Name', 'editable': True, 'flex': 3,
+                 **(BY_SURNAME if table == 'Authors' else {}),
                  'filter': 'agTextColumnFilter', 'floatingFilter': True},
                 {'headerName': 'Books', 'field': 'Owned', 'flex': 1, 'filter': 'agNumberColumnFilter'},
                 {'headerName': 'Wishlist', 'field': 'Wished', 'flex': 1, 'filter': 'agNumberColumnFilter'},
@@ -938,7 +952,7 @@ def reading_history_page() -> None:
             'columnDefs': [
                 {'headerName': 'Serial', 'field': 'Serial', 'width': 90, 'pinned': 'left'},
                 {'headerName': 'Title', 'field': 'Title', 'flex': 3, 'minWidth': 140},
-                {'headerName': 'Authors', 'field': 'Authors', 'flex': 2, 'minWidth': 120},
+                {'headerName': 'Authors', 'field': 'Authors', 'flex': 2, 'minWidth': 120, **BY_SURNAME},
                 {'headerName': '#', 'field': 'ReadingNo', 'width': 70, **NUM},
                 {'headerName': 'Started', 'field': 'StartedDate', 'width': 130},
                 {'headerName': 'Finished', 'field': 'FinishedDate', 'width': 130},
