@@ -1,0 +1,395 @@
+<title>Joey's Library Room</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=VT323&display=swap">
+<script>
+(function () {
+  const q = new URLSearchParams(location.search), hex = v => /^#?[0-9a-f]{6}$/i.test(v || '') ? '#' + v.replace('#', '') : null;
+  if (!q.has('lib')) return;
+  const r = document.documentElement; r.classList.add('lib');
+  if (hex(q.get('bg'))) r.style.setProperty('--bg', hex(q.get('bg')));
+  if (hex(q.get('fg'))) r.style.setProperty('--ink', hex(q.get('fg')));
+  const f = document.createElement('style');
+  f.textContent = '@font-face{font-family:"VT323";src:url(/static/fonts/VT323-Regular.ttf)}@font-face{font-family:"Share Tech Mono";src:url(/static/fonts/ShareTechMono-Regular.ttf)}';
+  document.head.append(f);
+})();
+</script>
+<style>
+:root {
+  --bg: #eef0ec; --surface: #ffffff; --ink: #1c2420; --muted: #56615b; --line: #cfd5cf;
+  --accent: #2c6a4c; --amber: #a9661d; --bad: #b3362b;
+  --crt-bg: #06100a; --crt-fg: #4dff88;
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --f-crt: "VT323", "Consolas", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141917; --surface: #1c2320; --ink: #e3e9e4; --muted: #9aa69f; --line: #2f3833;
+  --accent: #6fc196; --amber: #e0a050; --bad: #ff7a6b; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141917; --surface: #1c2320; --ink: #e3e9e4; --muted: #9aa69f; --line: #2f3833;
+  --accent: #6fc196; --amber: #e0a050; --bad: #ff7a6b; color-scheme: dark }
+/* inside Joey's Library: its colours and terminal fonts (set from ?fg=&bg= by the script below) */
+:root.lib { --surface: color-mix(in srgb, var(--ink) 8%, var(--bg)); --muted: color-mix(in srgb, var(--ink) 65%, var(--bg));
+  --line: color-mix(in srgb, var(--ink) 30%, var(--bg)); --accent: var(--ink); --amber: color-mix(in srgb, var(--ink) 55%, #e0a050);
+  --f-display: "VT323", ui-monospace, monospace; --f-body: "Share Tech Mono", ui-monospace, monospace; color-scheme: dark }
+:root.lib .bar h1 { display: none }
+:root.lib body { font-size: 15px }
+* { box-sizing: border-box }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 var(--f-body);
+  padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+h1, h2, h3 { font-family: var(--f-display); line-height: 1.15; margin: 0 }
+h2 { font-size: 1.35rem } h3 { font-size: 1.05rem }
+a { color: var(--accent) }
+button, select, input { font: inherit; color: inherit }
+button { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; min-height: 36px }
+button:hover { border-color: var(--accent) }
+button[aria-pressed="true"], button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent) }
+button:focus-visible, select:focus-visible, input:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+input, select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-height: 34px; min-width: 0 }
+kbd { font: 13px var(--f-body); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--surface) }
+.muted { color: var(--muted) }
+
+.bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--surface) }
+.bar h1 { font-size: 1.2rem; margin-right: auto }
+.bar nav { display: flex; gap: 6px; flex-wrap: wrap }
+#dbState { font-size: 13px; color: var(--muted) }
+/* universes: named versions of the room */
+.uni { display: flex; gap: 6px; align-items: center; flex-wrap: wrap }
+.uni[hidden] { display: none }
+.uni label { display: flex; gap: 6px; align-items: center }
+.uni select { max-width: 16em }
+#uniDlg { width: min(460px, calc(100vw - 32px)) }
+#uniDlg input { width: 100%; margin: 6px 0 }
+#uniDlg input[hidden] { display: none }
+.uniMsg { color: var(--bad); min-height: 1.4em; margin: 0 0 8px; font-size: 14px }
+
+.view { padding: 12px 16px 48px }
+.view[hidden] { display: none }
+
+/* room */
+.stage { position: relative; width: 100%; height: min(72vh, 760px); min-height: 320px; background: #0c0f0d; border-radius: 10px; overflow: hidden }
+.stage canvas { display: block; width: 100%; height: 100% }
+.stage.crt::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0,0,0,.28) 0 1px, transparent 1px 3px); mix-blend-mode: multiply }
+.cross { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; pointer-events: none }
+.cross::before, .cross::after { content: ""; position: absolute; background: rgba(255,255,255,.85); box-shadow: 0 0 2px #000 }
+.cross::before { left: 6px; top: 0; width: 2px; height: 14px } .cross::after { top: 6px; left: 0; height: 2px; width: 14px }
+.hud { position: absolute; left: 10px; top: 10px; right: 10px; display: flex; justify-content: space-between; gap: 8px; pointer-events: none;
+  font: 13px var(--f-body); color: #fff; text-shadow: 0 1px 2px #000 }
+.tip { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: calc(100% - 24px); pointer-events: none;
+  background: rgba(10,14,12,.78); color: #eef; border-radius: 8px; padding: 6px 12px; font-size: 14px; text-align: center }
+.tip b { color: #9ff0c0 } .tip .bad { color: #ff9c8f }
+.tip:empty { display: none }
+.start { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(8,12,10,.45); border: 0; border-radius: 0; color: #fff; font: 600 18px var(--f-display) }
+.start[hidden] { display: none }
+.start span { background: rgba(0,0,0,.55); padding: 10px 18px; border-radius: 10px }
+.stage.crt .hud, .stage.crt .tip { font-family: var(--f-crt); font-size: 18px; color: var(--crt-fg); text-shadow: 0 0 6px rgba(77,255,136,.6) }
+.touch { position: absolute; right: 10px; bottom: 54px; display: none; grid-template-columns: repeat(3, auto); gap: 6px }
+.touch button { background: rgba(20,26,22,.75); color: #fff; border-color: rgba(255,255,255,.25); font-size: 13px; min-height: 40px; padding: 6px 9px }
+.pad { position: absolute; left: 10px; bottom: 54px; display: none; grid-template-columns: repeat(3, 44px); gap: 4px }
+.pad button { background: rgba(20,26,22,.75); color: #fff; border-color: rgba(255,255,255,.25); min-height: 44px; padding: 0 }
+@media (pointer: coarse) { .touch, .pad { display: grid } }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px }
+.dimmer { display: inline-flex; gap: 8px; align-items: center; min-height: 36px; padding: 0 6px }
+.dimmer input { width: 9em; accent-color: var(--accent) }
+.furn { margin-top: 10px; max-width: 1180px }
+.furn p { margin: 0 0 8px; font-size: 14px }
+.furncols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 18px }
+.furnlist { display: grid; margin-top: 6px }
+.furnrow { display: flex; gap: 8px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding: 3px 0; font-size: 14px }
+.furnrow button { min-height: 30px; padding: 2px 10px; font-size: 13px; flex: none }
+.keys { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 14px; color: var(--muted) }
+
+/* workshop */
+.shop { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 18px; align-items: start; max-width: 1280px }
+@media (max-width: 860px) { .shop { grid-template-columns: minmax(0, 1fr) } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px }
+.form { display: grid; grid-template-columns: 8.5em minmax(0, 1fr); gap: 8px 10px; align-items: center }
+.form label { font-size: 14px; color: var(--muted) }
+.form .full { grid-column: 1 / -1 }
+.inline { display: flex; gap: 6px; flex-wrap: wrap; align-items: center }
+.inline input[type=number] { width: 5.5em }
+.faces { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px }
+.face { border: 1px solid var(--line); border-radius: 8px; padding: 6px; display: grid; gap: 4px; font-size: 13px }
+.face .thumb { height: 74px; background: #0001 center / contain no-repeat; border-radius: 4px }
+.face .inline button { font-size: 12px; min-height: 30px; padding: 2px 8px }
+#prev { width: 100%; aspect-ratio: 4 / 3; display: block; border-radius: 8px; background: #20282300; cursor: grab }
+.list { max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; margin-top: 8px }
+.list button { display: flex; gap: 8px; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; padding: 6px 10px; align-items: center }
+.list button img { width: 22px; height: 33px; object-fit: cover; border-radius: 2px; flex: none }
+.list button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.msg { font-size: 14px; min-height: 1.5em }
+.msg.bad { color: var(--bad) }
+
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); padding: 14px; width: min(980px, calc(100vw - 32px)) }
+dialog::backdrop { background: rgba(0,0,0,.55) }
+.warp { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px }
+@media (max-width: 700px) { .warp { grid-template-columns: minmax(0, 1fr) } }
+#warpSrc { width: 100%; touch-action: none; background: #111; border-radius: 6px }
+#warpOut { width: 100%; background: #111; border-radius: 6px }
+
+/* formats */
+.types { max-width: 1180px; display: grid; gap: 16px }
+table { border-collapse: collapse; width: 100%; font-size: 14px }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top }
+th { font-weight: 700; color: var(--muted) }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap }
+.tablewrap { overflow-x: auto }
+#scale { width: 100%; height: auto; display: block }
+#scale text { font: 15px var(--f-body); fill: var(--muted) }
+.prose { max-width: 72ch }
+
+/* bookcases */
+#caseList { max-width: 1100px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 12px }
+.casehead { display: flex; gap: 10px; align-items: center; margin-bottom: 8px }
+.casefmt { margin: 0 0 14px; gap: 14px; flex-wrap: wrap }
+.caseletter { font: 700 1.6rem var(--f-display); min-width: 1.6em; padding: 0 .2em; height: 1.6em; display: grid; place-items: center; border-radius: 8px; background: var(--accent); color: var(--bg) }
+.casename { flex: 1; font: 600 1.05rem var(--f-display) }
+.caseno { white-space: nowrap; font-size: 14px }
+#furnCaseList .casecard, .zonecard { margin-bottom: 14px }
+.zoneunits { width: 100%; margin-top: 6px }
+.zoneunits td.inline button { font-size: 12px; min-height: 28px; padding: 2px 8px }
+.casebody { display: grid; grid-template-columns: minmax(200px, 340px) minmax(0, 1fr); gap: 12px; align-items: start }
+@media (max-width: 640px) { .casebody { grid-template-columns: minmax(0, 1fr) } .casesvg { max-height: 75vh } .caseside { overflow-x: auto } }
+.casesvg { width: 100%; height: auto; display: block; outline-offset: 2px }
+.casesvg .cback { fill: #3a2a1e } .casesvg .cside { fill: #5b4130 } .casesvg .cjoin { stroke: var(--muted); stroke-width: 3; stroke-dasharray: 10 8 }
+.casesvg .hole { fill: #120c08 }
+.casesvg .hit { fill: transparent; cursor: pointer } .casesvg .hit[data-sec]:hover { fill: rgba(111,193,150,.25) }
+.casesvg .board.fixedb { fill: #7a5a40 } .casesvg .board.adj { fill: var(--accent); cursor: pointer } .casesvg .board.picked { fill: var(--amber) }
+.casesvg .board-hit:hover + text, .casesvg .board-hit { cursor: pointer }
+.casesvg text { font: 56px var(--f-body); fill: var(--ink) } .casesvg .code { font-weight: 700 } .casesvg .nm { fill: var(--muted) }
+.casesvg .lab.on .code { fill: var(--amber) }
+.casesvg .gap { fill: var(--muted); font-size: 50px } .casesvg .cnt { fill: #e9dccb; font-size: 50px }
+.casesvg .floor { stroke: var(--line); stroke-width: 4 }
+.caseside table input { width: 100%; min-width: 6em }
+.caseside tr.on td { background: color-mix(in srgb, var(--amber) 18%, transparent) }
+.caseside tbody tr { cursor: default }
+</style>
+
+<header class="bar">
+  <h1>Joey's Library Room</h1>
+  <nav aria-label="Views">
+    <button type="button" data-view="vRoom" aria-pressed="true">Room</button>
+    <button type="button" data-view="vShop" aria-pressed="false">Book workshop</button>
+    <button type="button" data-view="vCases" aria-pressed="false">Bookcases</button>
+    <button type="button" data-view="vZones" aria-pressed="false">Zones</button>
+    <button type="button" data-view="vTypes" aria-pressed="false">Book types</button>
+  </nav>
+  <!-- universes: named versions of the room (universes.js) -->
+  <div class="uni" id="uniBar" hidden>
+    <label>Universe <select id="uniSel" aria-label="Which version of the room"></select></label>
+    <button type="button" id="uniCopy">New copy</button>
+    <button type="button" id="uniNew">New empty</button>
+    <button type="button" id="uniRename">Rename</button>
+    <button type="button" id="uniDel">Delete</button>
+  </div>
+  <dialog id="uniDlg" aria-labelledby="uniDlgTitle">
+    <form method="dialog">
+      <h3 id="uniDlgTitle"></h3>
+      <p class="muted" id="uniDlgText"></p>
+      <input id="uniName" maxlength="60" aria-label="Name" autocomplete="off">
+      <p class="uniMsg" id="uniMsg" aria-live="polite"></p>
+      <div class="inline"><button type="submit" class="primary" id="uniOk" value="ok">OK</button><button type="submit" value="cancel" formnovalidate>Cancel</button></div>
+    </form>
+  </dialog>
+  <span id="dbState">Loading…</span>
+</header>
+
+<section class="view" id="vRoom">
+  <div class="stage" id="stage">
+    <canvas id="cv" tabindex="0" aria-label="Walkable 3D model of the living room with bookcases and books"></canvas>
+    <div class="cross" aria-hidden="true"></div>
+    <div class="hud"><span id="hudpos"></span><span id="hudhand"></span></div>
+    <div class="tip" id="tip" aria-live="polite"></div>
+    <div class="pad" aria-label="Walk">
+      <span></span><button type="button" data-k="KeyW" aria-label="Forward">▲</button><span></span>
+      <button type="button" data-k="KeyA" aria-label="Left">◀</button><button type="button" data-k="KeyS" aria-label="Back">▼</button><button type="button" data-k="KeyD" aria-label="Right">▶</button>
+    </div>
+    <div class="touch" aria-label="Book actions">
+      <button type="button" data-act="use">Take / place</button>
+      <button type="button" data-act="drop">Let go</button>
+      <button type="button" data-act="open">Open parcel</button>
+      <button type="button" data-act="turn">Upright / flat</button>
+      <button type="button" data-act="flip">Spine / edge</button>
+      <button type="button" data-act="face">Cover out</button>
+      <button type="button" data-act="twist">Turn 15°</button>
+      <button type="button" data-act="lean">Lean 5°</button>
+      <button type="button" data-act="straight">Straight</button>
+      <button type="button" data-act="in">Deeper</button>
+      <button type="button" data-act="out">Shallower</button>
+    </div>
+    <button class="start" id="start" type="button"><span>Click to walk in · Esc to stop</span></button>
+  </div>
+  <div class="row">
+    <button type="button" id="mTex" aria-pressed="true">Textured</button>
+    <button type="button" id="mFlat" aria-pressed="false">Flat colours</button>
+    <button type="button" id="mCrt" aria-pressed="false">RobCo terminal</button>
+    <label class="dimmer" title="The lamp on the brick wall">Lamp <input type="range" id="mLamp" min="0" max="100" step="1" value="70" aria-label="Lamp brightness"></label>
+    <button type="button" id="mLoose" aria-pressed="false">Loose books (all physics)</button>
+    <button type="button" id="mHome">Back to the start</button>
+    <button type="button" id="mRain">Drop every book from the ceiling</button>
+    <button type="button" id="mReset">Reset the shelves</button>
+    <button type="button" id="mFurn" aria-pressed="false">Move furniture</button>
+    <button type="button" id="mFurnReset">Furniture back where it was</button>
+    <button type="button" id="mFurnList" aria-pressed="false">Add or take out furniture</button>
+  </div>
+  <div class="card furn" id="furnPanel" hidden>
+    <p class="muted">A piece you take out leaves the room, and the books on it go to the other shelves. Pieces you add start in front of you: click in the room and put them where the outline is green.</p>
+    <div class="furncols">
+      <div><h3>In the room</h3><div class="furnlist" id="furnIn"></div></div>
+      <div><h3>Taken out</h3><div class="furnlist" id="furnOut"></div></div>
+      <div><h3>Add another</h3><div class="furnlist" id="furnAdd"></div></div>
+    </div>
+  </div>
+  <div class="keys">
+    <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk · mouse look · <kbd>Space</kbd> up · <kbd>Alt</kbd> or <kbd>C</kbd> down</span>
+    <span><b>click</b> take a book / put it where the green outline is</span>
+    <span>aim at the top of a lying book to pile on it (any size, off-centre too) · at the top of standing books to lay it across them (amber outline: physics settles it)</span>
+    <span><kbd>R</kbd> upright ↔ lying</span>
+    <span><kbd>F</kbd> spine out ↔ edges out</span>
+    <span><kbd>V</kbd> turn over · <kbd>Q</kbd> cover out</span>
+    <span><kbd>Ctrl</kbd> + <b>mouse</b> turn the book round (left, right) and lean it (up, down) · <kbd>T</kbd> straight again</span>
+    <span><b>wheel</b> or <kbd>Z</kbd>/<kbd>X</kbd> deeper/shallower · <kbd>1</kbd> flush front · <kbd>2</kbd> to the back</span>
+    <span><b>right-click</b> or <kbd>G</kbd> let go (it falls)</span>
+    <span><kbd>E</kbd> open the book in the workshop</span>
+    <span>new books arrive in parcels on the coffee table: pick one up, <kbd>O</kbd> opens it</span>
+    <span><b>Move furniture</b>: click a piece to pick it up, <kbd>R</kbd> quarter turn, <b>wheel</b> turn (<kbd>Shift</kbd> finer), <b>click</b> where the outline is green, <b>right-click</b> or <kbd>G</kbd> puts it back, <kbd>Delete</kbd> takes it out of the room · a <b>book stand</b> (add one under <b>Add or take out furniture</b>) goes on a shelf or a table: aim at the board; a book put on it leans back, cover out</span>
+  </div>
+</section>
+
+<section class="view" id="vShop" hidden>
+  <div class="shop">
+    <div class="card">
+      <h2>Book workshop</h2>
+      <p class="muted" style="margin:.3em 0 .8em">Make a book from its ISBN, then fix how it looks: format, thickness, spine, sprayed edges, or photos of each side.</p>
+      <div class="inline">
+        <button type="button" id="wNew">New book</button>
+        <input id="wFind" type="search" placeholder="Find a book on the shelves" aria-label="Find a book" style="flex:1;min-width:10em">
+      </div>
+      <div class="list" id="wList" role="listbox" aria-label="Books"></div>
+      <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+      <div class="form">
+        <label for="fIsbn">ISBN</label>
+        <div class="inline"><input id="fIsbn" inputmode="numeric" style="flex:1"><button type="button" id="wLook">Look up</button></div>
+        <label for="fTitle">Title</label><input id="fTitle">
+        <label for="fAuthor">Author</label><input id="fAuthor">
+        <label for="fPages">Pages</label><input id="fPages" type="number" min="8" max="4000" step="1">
+        <label for="fFormat">Book type</label><select id="fFormat"></select>
+        <label>Size, mm</label>
+        <div class="inline">
+          <input id="fW" type="number" step="0.5" aria-label="Width in mm"> ×
+          <input id="fH" type="number" step="0.5" aria-label="Height in mm"> ×
+          <input id="fT" type="number" step="0.5" aria-label="Thickness in mm">
+          <button type="button" id="wAuto" title="Size from the book type and page count">From type</button>
+        </div>
+        <label for="fSpine">Spine colour</label><div class="inline"><input id="fSpine" type="color"><label for="fBack" style="margin-left:8px">Back</label><input id="fBack" type="color"></div>
+        <label for="fSpray">Edges</label>
+        <div class="inline">
+          <select id="fSpray"></select>
+          <input id="fSprayC" type="color" value="#b0302a" aria-label="Spray colour">
+          <input id="fSprayC2" type="color" value="#1b1b1b" aria-label="Second colour (speckles, stars)">
+        </div>
+        <label>Sprayed sides</label>
+        <div class="inline">
+          <label><input type="checkbox" id="sTop" checked> top</label>
+          <label><input type="checkbox" id="sFore" checked> fore-edge</label>
+          <label><input type="checkbox" id="sBottom" checked> bottom</label>
+          <label for="fPaper" style="margin-left:8px">paper</label><input id="fPaper" type="color" value="#efe8d6">
+        </div>
+      </div>
+      <h3 style="margin-top:14px">Photos of the sides</h3>
+      <p class="muted" style="margin:.2em 0;font-size:14px">Take a photo of a side, then drag the four corners onto the book's corners. The photo is straightened onto that side of the 3D book.</p>
+      <div class="faces" id="faces"></div>
+      <input type="file" id="fFile" accept="image/*" hidden>
+    </div>
+    <div style="display:grid;gap:12px;position:sticky;top:8px">
+      <div class="card">
+        <canvas id="prev" aria-label="3D preview of the book, drag to turn it"></canvas>
+        <div class="inline" style="margin-top:8px">
+          <button type="button" class="primary" id="wSave">Save to the library</button>
+          <button type="button" id="wHold">Take it into the room</button>
+          <button type="button" id="wDelete" hidden>Remove my changes</button>
+        </div>
+        <div class="msg" id="wMsg" aria-live="polite"></div>
+        <div class="inline" style="margin-top:6px"><label for="wShelf">Shelf</label><select id="wShelf" style="flex:1"></select></div>
+        <div class="msg" id="wWhere" aria-live="polite"></div>
+      </div>
+      <div class="card muted" style="font-size:14px" id="wInfo"></div>
+    </div>
+  </div>
+  <dialog id="warp" aria-labelledby="warpTitle">
+    <h2 id="warpTitle">Straighten the photo</h2>
+    <p class="muted" style="margin:.3em 0 .6em;font-size:14px">Drag the four dots onto the corners of the <b id="warpFace"></b>. The numbers show the order: 1 top left, 2 top right, 3 bottom right, 4 bottom left, as seen when that side faces you.</p>
+    <div class="warp">
+      <canvas id="warpSrc"></canvas>
+      <div style="display:grid;gap:8px;align-content:start">
+        <canvas id="warpOut"></canvas>
+        <div class="inline"><button type="button" id="warpRot">Turn photo 90°</button></div>
+        <div class="inline"><button type="button" class="primary" id="warpOk">Use it</button><button type="button" id="warpCancel">Cancel</button></div>
+      </div>
+    </div>
+  </dialog>
+</section>
+
+<section class="view" id="vCases" hidden>
+  <div class="prose">
+    <h2>Bookcases and shelves</h2>
+    <p>Every bookcase has a letter, A to D from left to right as you face them from the room, and every shelf a number counted from the top: <b>B3</b> is the third shelf down in bookcase B, and <b>B top</b> is on top of it. Below you can have the bookcases numbered instead (1, 2, 3, from 0, or as 01, 02) and the shelves counted from 0, with two digits or as a, b, c. Give either a name if you like, and give a bookcase a number of its own with <b>Number</b>. Bookcases can also be gathered into named zones under <b>Zones</b>; the zone's letter or number then comes first (A-B3). The other furniture books can go on is listed below the bookcases: name its shelves the same way, and give it a number to have its shelves written like a bookcase's instead of K1, Chatol 2 and so on. A book's place is kept on the shelf itself, so it stays with that shelf when the shelf is moved or the numbers change.</p>
+    <p>A BILLY has a bottom, a top and one <b>fixed shelf</b> in the middle that is screwed in. The four other shelves rest on pins in rows of holes 32 mm apart, one group below the fixed shelf and one above. Click a green shelf to pick it, then click a hole (or use ▲ ▼) to move it; click a hole with nothing picked to add a shelf there. Two shelves need at least one free hole between them. Books on a shelf that moves go with it, books that no longer fit are laid down, and books on a shelf you take out fall.</p>
+  </div>
+  <div class="inline casefmt">
+    <label>Bookcases <select id="fmtCases"><option value="A">A, B, C</option><option value="1">1, 2, 3</option><option value="0">0, 1, 2</option><option value="01">01, 02, 03</option><option value="00">00, 01, 02</option></select></label>
+    <label>Shelves <select id="fmtShelves"><option value="1">1, 2, 3</option><option value="0">0, 1, 2</option><option value="01">01, 02, 03</option><option value="00">00, 01, 02</option><option value="a">a, b, c</option></select></label>
+    <span class="muted" id="fmtEx"></span>
+  </div>
+  <div id="caseList"></div>
+  <h3 style="margin:18px 0 8px">Other furniture books can go on</h3>
+  <div id="furnCaseList"></div>
+  <p class="prose muted" style="font-size:14px;margin-top:14px">IKEA does not publish the heights of the holes. These are read off the assembly drawing and the 32 mm hole spacing, so measure a real BILLY to correct them: the height of the fixed shelf and of the lowest and highest hole in each group. The 35 cm height extension is drawn without holes. Sources: <a href="https://www.ikea.com/at/en/p/billy-bookcase-brown-walnut-effect-50508652/" target="_blank" rel="noopener">IKEA BILLY 80×28×202</a> (1 fixed and 4 adjustable shelves) · <a href="https://www.ikea.com/at/en/assembly_instructions/billy-bookcase-brown-walnut-effect__AA-2289108-3-100.pdf" target="_blank" rel="noopener">assembly instructions AA-2289108</a> · <a href="https://www.ikea.com/qa/en/p/billy-height-extension-unit-brown-walnut-effect-30508667/" target="_blank" rel="noopener">BILLY height extension</a> · <a href="https://en.wikipedia.org/wiki/32_mm_cabinetmaking_system" target="_blank" rel="noopener">32 mm system</a> · <a href="https://festoolownersgroup.com/threads/ikea-us-shelf-pin-hole-pattern-is-almost-32mm.60123" target="_blank" rel="noopener">IKEA shelf pin holes</a> · <a href="https://www.hausbau-forum.de/en/threads/billy-ikea-shelf-board-pencils-for-shelf-boards-wanted.23480" target="_blank" rel="noopener">BILLY shelf pins</a></p>
+</section>
+
+<section class="view" id="vZones" hidden>
+  <div class="prose">
+    <h2>Zones</h2>
+    <p>Gather bookcases, and any other furniture books can go on, into zones the way a library does: one for fantasy, one for science fiction. Each zone gets a letter or a number, written in front of the bookcase and the shelf, so the third shelf in the second bookcase of zone A is <b>A-B3</b>, or <b>A-02-3</b>, <b>1-2-3</b> and so on with other formats (bookcases and shelves are chosen under <b>Bookcases</b>). The bookcases in a zone count from the first one in it, in the order shown here; use ▲ ▼ to change it. A piece is in one zone at most. Zones only change how places are written: the books stay where they are.</p>
+  </div>
+  <div class="inline casefmt">
+    <label>Zones <select id="fmtZones"><option value="A">A, B, C</option><option value="1">1, 2, 3</option><option value="0">0, 1, 2</option><option value="01">01, 02, 03</option><option value="00">00, 01, 02</option></select></label>
+    <span class="muted" id="zoneEx"></span>
+  </div>
+  <div id="zoneList"></div>
+  <div class="inline" style="margin:14px 0"><input id="zoneNew" placeholder="Name of a new zone, e.g. Fantasy" aria-label="Name of a new zone" style="min-width:16em"><button type="button" class="primary" id="zoneAdd">Add a zone</button></div>
+  <div class="card"><h3 style="margin:0 0 6px">Not in a zone</h3><p class="muted" id="zoneFree" style="margin:0"></p></div>
+</section>
+
+<section class="view" id="vTypes" hidden>
+  <div class="types">
+    <div class="prose">
+      <h2>Book types and their real sizes</h2>
+      <p>Each type has a page size (the trim) and a paper thickness. A hardcover's boards stand about 3 mm proud of the pages at the top, bottom and fore-edge, and each board is about 2.8 mm thick. Thickness comes from the page count: two pages make one leaf, and a leaf is 0.095 mm in a mass-market paperback and 0.11–0.115 mm in trade paperbacks and hardcovers. Those figures come from the measured thicknesses of real books in the top-100 list.</p>
+      <p><b>"Trade edition"</b> means the trade paperback: bigger page, better paper. <b>"Travel edition"</b> usually means the British <b>airport/export edition</b>, a C-format trade paperback sold at airports before the small B-format paperback comes out, or the small pocket/mass-market size made for travelling. Denmark has no fixed pocket size, but the printers' A–D format letters are used.</p>
+    </div>
+    <div class="card tablewrap"><svg id="scale" role="img" aria-label="Book types drawn to scale, side by side"></svg></div>
+    <div class="card tablewrap"><table id="typeTable"><thead><tr><th>Region</th><th>Type</th><th>Pages (trim)</th><th>Over the boards</th><th>Notes</th></tr></thead><tbody></tbody></table></div>
+    <div class="prose muted" style="font-size:14px">
+      <p><b>The 100 books</b> are NPR's 2011 readers' poll of the top 100 science-fiction and fantasy books, each with the edition (ISBN) NPR linked. Page counts and covers come from Open Library. 18 have measured sizes from Open Library; 6 more give their format (hardcover, mass market). The rest are guessed from the publisher and the shape of the cover. Fix any of them in the workshop. For the boxed sets of A Song of Ice and Fire and Mistborn, the list has the first volume.</p>
+      <p>Sources: <a href="https://www.npr.org/2011/08/11/139085843/your-picks-top-100-science-fiction-fantasy-books" target="_blank" rel="noopener">NPR top 100 SF/F</a> · <a href="https://openlibrary.org/developers/api" target="_blank" rel="noopener">Open Library</a> · <a href="https://publishing.co.uk/guides/standard-book-sizes-uk/" target="_blank" rel="noopener">UK book sizes (publishing.co.uk)</a> · <a href="https://lex.dk/bogformat" target="_blank" rel="noopener">Danish formats (lex.dk)</a> · <a href="https://www.adlibris.com/nb/artikler/pocket-boker" target="_blank" rel="noopener">Adlibris on pocket sizes</a> · <a href="https://thebookcoverdesigner.com/standard-book-sizes/" target="_blank" rel="noopener">US sizes (The Book Cover Designer)</a> · <a href="https://reedsy.com/blog/standard-book-sizes/" target="_blank" rel="noopener">Reedsy</a></p>
+    </div>
+  </div>
+</section>
+
+<script src="vendor/three.min.js"></script>
+<script src="vendor/cannon.min.js"></script>
+<script src="js/books.js" charset="utf-8"></script>
+<script src="js/furniture.js" charset="utf-8"></script>
+<script src="js/cat.js" charset="utf-8"></script>
+<script src="js/lamp.js" charset="utf-8"></script>
+<script src="js/room.js" charset="utf-8"></script>
+<script src="js/store.js" charset="utf-8"></script>
+<script src="js/game.js" charset="utf-8"></script>
+<script src="js/workshop.js" charset="utf-8"></script>
+<script src="js/cases.js" charset="utf-8"></script>
+<script src="js/zones.js" charset="utf-8"></script>
+<script src="js/types.js" charset="utf-8"></script>
+<script src="js/universes.js" charset="utf-8"></script>

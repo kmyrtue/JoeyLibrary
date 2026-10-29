@@ -83,6 +83,7 @@ def upgrade() -> None:
             conn.execute('ALTER TABLE BooksOwned DROP COLUMN FinishedDate')
 
 
+
 # ---------- lookup tables ----------
 
 def names(table: str) -> list[str]:
@@ -260,6 +261,13 @@ def get_book(kind: str, book_id: int) -> dict:
     return row
 
 
+def _free_id(conn, table: str) -> int:
+    """The lowest BookID not in use: a deleted book's number goes to the next new book, so there are no gaps."""
+    return conn.execute(f'''SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM {table} WHERE BookID = 1) THEN 1
+                            ELSE (SELECT MIN(b.BookID) + 1 FROM {table} b
+                                  WHERE NOT EXISTS (SELECT 1 FROM {table} n WHERE n.BookID = b.BookID + 1)) END''').fetchone()[0]
+
+
 def save_book(kind: str, data: dict, book_id: int | None = None) -> int:
     """Insert or update a book. data holds COLUMNS[kind] plus FormatName, SeriesTitle, AuthorList, GenreList, TagList,
     and for library books Readings: the whole reading history, oldest first."""
@@ -270,9 +278,10 @@ def save_book(kind: str, data: dict, book_id: int | None = None) -> int:
         values['SeriesName'] = _id_for(conn, 'Series', data.get('SeriesTitle'))
         cols = list(values)
         if book_id is None:
-            book_id = conn.execute(
-                f'INSERT INTO {book} ({", ".join(cols)}) VALUES ({", ".join("?" * len(cols))})',
-                [values[c] for c in cols]).lastrowid
+            book_id = _free_id(conn, book)
+            conn.execute(
+                f'INSERT INTO {book} (BookID, {", ".join(cols)}) VALUES (?, {", ".join("?" * len(cols))})',
+                [book_id] + [values[c] for c in cols])
         else:
             conn.execute(f'UPDATE {book} SET {", ".join(f"{c} = ?" for c in cols)} WHERE BookID = ?',
                          [values[c] for c in cols] + [book_id])
@@ -410,3 +419,41 @@ def stats(year: int) -> dict:
             'formats': top('''SELECT COALESCE(f.FormatName, 'Unknown'), COUNT(*) FROM BooksOwned b
                               LEFT JOIN Formats f ON f.FormatID = b.Format GROUP BY 1 ORDER BY 2 DESC'''),
         }
+
+
+# ---------- the bookshelf simulation ----------
+# The room shows the library books (not the wishlist). Title, authors, pages and ISBN are the library's own and are
+# read and changed here; everything else the room keeps is in its own database (roomdb.py).
+
+def sim_books() -> list[dict]:
+    """Every library book with what the room needs: authors and format."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute('''
+            SELECT b.BookID, b.Title, b.PageCount, b.ISBN, b.EdgeOut, b.LoanedTo, f.FormatName,
+                   (SELECT group_concat(AuthorName, ', ') FROM (
+                        SELECT a.AuthorName FROM BooksOwnedAuthors ba JOIN Authors a USING (AuthorID)
+                        WHERE ba.BookID = b.BookID ORDER BY ba.rowid)) AS Authors
+            FROM BooksOwned b
+            LEFT JOIN Formats f ON f.FormatID = b.Format
+            ORDER BY b.Title COLLATE NOCASE''')]
+
+
+def owned_exists(book_id: int) -> bool:
+    with connect() as conn:
+        return conn.execute('SELECT 1 FROM BooksOwned WHERE BookID = ?', (book_id,)).fetchone() is not None
+
+
+def sim_update_book(book_id: int, title: str, authors: list[str], pages: int | None, isbn: str | None,
+                    sprayed: bool, format_name: str | None) -> None:
+    """Save the library's part of a book changed in the room's workshop. The authors are only relinked when they
+    changed, so the order and spelling the library has stay; a format is only filled in when the book has none."""
+    with connect() as conn:
+        conn.execute('''UPDATE BooksOwned SET Title = ?, PageCount = ?, ISBN = ?, EdgeOut = ?,
+                        Format = COALESCE(Format, ?) WHERE BookID = ?''',
+                     (title, pages, isbn, int(sprayed), _id_for(conn, 'Formats', format_name), book_id))
+        now = [r[0] for r in conn.execute('''SELECT a.AuthorName FROM BooksOwnedAuthors ba JOIN Authors a USING (AuthorID)
+                                            WHERE ba.BookID = ? ORDER BY ba.rowid''', (book_id,))]
+        if authors and authors != now:
+            conn.execute('DELETE FROM BooksOwnedAuthors WHERE BookID = ?', (book_id,))
+            for name in dict.fromkeys(authors):
+                conn.execute('INSERT OR IGNORE INTO BooksOwnedAuthors VALUES (?, ?)', (book_id, _id_for(conn, 'Authors', name)))

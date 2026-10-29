@@ -1,12 +1,13 @@
 """The library user interface: one NiceGUI page per menu item."""
 import html
+import json
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from nicegui import app, run, ui
 
-from . import backup, db, isbn as isbn_lookup
+from . import backup, db, isbn as isbn_lookup, roomdb, sim  # sim: the 3D room's files and routes, before the catch-all page
 
 HERE = Path(__file__).resolve().parent
 app.add_static_files('/static', HERE / 'static')
@@ -29,7 +30,17 @@ MENU = [
     ('EDITIONS', '/editions'),
     'SYSTEM',
     ('SETTINGS', '/settings'),
+    'BOOKSHELF SIMULATION',
+    ('BOOKSHELF SIMULATION', '/bookshelf'),
+    ('BOOK WORKSHOP', '/bookshelf/workshop'),
+    ('BOOKCASES', '/bookshelf/cases'),
+    ('ZONES', '/bookshelf/zones'),
+    ('BOOK TYPES', '/bookshelf/types'),
 ]
+# the views of the 3D room (sim/index.html) behind the BOOKSHELF SIMULATION menu items: path -> (label, view)
+SIM_VIEWS = {'/bookshelf': ('BOOKSHELF SIMULATION', 'vRoom'), '/bookshelf/workshop': ('BOOK WORKSHOP', 'vShop'),
+             '/bookshelf/cases': ('BOOKCASES', 'vCases'), '/bookshelf/zones': ('ZONES', 'vZones'),
+             '/bookshelf/types': ('BOOK TYPES', 'vTypes')}
 MOBILE_WIDTH = 768  # narrower than this is laid out for phones (see terminal.css)
 PHONE_TITLE_WIDTH = 140  # starting width of the Title column on a phone; dragging its edge changes it
 KIND_NAMES = {'owned': 'LIBRARY', 'wished': 'WISHLIST'}
@@ -45,6 +56,118 @@ def button(text: str, on_click=None, danger: bool = False) -> ui.button:
     if danger:
         b.classes('danger')
     return b
+
+
+MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
+          'November', 'December']
+
+
+class DateInput(ui.input):
+    """A date typed as dd/mm/yyyy, or picked from the calendar behind the icon.
+
+    The browser's own date field is drawn by the system and edits the day, month and year as whole blocks, so one
+    Backspace in the year wiped all of it. This is a plain text field with a mask: digits only, the slashes put in by
+    themselves, and Backspace takes away the last digit typed. The calendar is drawn here, the same on every system.
+    The date itself is `iso` ('YYYY-MM-DD', or '' when the field is empty or not a whole date yet).
+    """
+
+    def __init__(self, label: str, value: str | None = '') -> None:
+        super().__init__(label, value=self.text_of(value or ''),
+                         validation={'NOT A DATE (DD/MM/YYYY)': lambda v: not v or self.iso_of(v) is not None})
+        self.props('stack-label mask="##/##/####" placeholder="dd/mm/yyyy" inputmode=numeric').classes('term-date')
+        self.month = date.today().replace(day=1)  # the month the calendar shows
+        self.picking_month = False
+        with self.add_slot('append'):
+            icon = ui.icon('calendar_month').classes('cursor-pointer term-date-icon')
+            with icon, ui.menu().props('anchor="bottom right" self="top right"').classes('term-cal-menu') as self.menu:
+                self.panel = ui.element('div').classes('term-cal')
+        self.menu.on('before-show', self.opened)
+
+    @staticmethod
+    def text_of(iso: str) -> str:
+        try:
+            return datetime.strptime(iso, '%Y-%m-%d').strftime('%d/%m/%Y')
+        except ValueError:
+            return iso
+
+    @staticmethod
+    def iso_of(text: str) -> str | None:
+        try:
+            return datetime.strptime(text, '%d/%m/%Y').date().isoformat() if len(text or '') == 10 else None
+        except ValueError:
+            return None
+
+    @property
+    def iso(self) -> str:
+        return self.iso_of(self.value) or ''
+
+    @staticmethod
+    def check(*fields: 'DateInput') -> bool:
+        """True when every field is empty or a whole, real date; otherwise say so (rather than save no date)."""
+        bad = [f for f in fields if f.value and not f.iso]
+        if bad:
+            ui.notify(f'{bad[0].props["label"]}: {bad[0].value} IS NOT A DATE. WRITE IT AS DD/MM/YYYY.', type='warning')
+            bad[0].run_method('focus')
+        return not bad
+
+    @iso.setter
+    def iso(self, value: str | None) -> None:
+        self.value = self.text_of(value or '')
+
+    def opened(self) -> None:
+        chosen = self.iso
+        self.month = (date.fromisoformat(chosen) if chosen else date.today()).replace(day=1)
+        self.picking_month = False
+        self.draw()
+
+    def step(self, months: int) -> None:
+        m = self.month.year * 12 + self.month.month - 1 + months
+        self.month = date(m // 12, m % 12 + 1, 1)
+        self.draw()
+
+    def pick(self, day: date | None) -> None:
+        self.iso = day.isoformat() if day else ''
+        self.menu.close()
+
+    def choose_month(self, month: int) -> None:
+        self.month = self.month.replace(month=month)
+        self.picking_month = False
+        self.draw()
+
+    def draw(self) -> None:
+        """The calendar as in the browsers: month and year with ▾ (click it to pick a month), ↑ ↓ for the month
+        before and after, weeks from Monday with the days of the months around it dimmed, today boxed."""
+        self.panel.clear()
+        chosen, today = self.iso, date.today().isoformat()
+        with self.panel:
+            with ui.row().classes('term-cal-head no-wrap items-center'):
+                ui.label(f'{MONTHS[self.month.month - 1]} {self.month.year} {"▴" if self.picking_month else "▾"}') \
+                    .classes('term-cal-title').on('click', lambda: (setattr(self, 'picking_month', not self.picking_month), self.draw()))
+                ui.space()
+                step = 12 if self.picking_month else 1
+                ui.button(icon='arrow_upward', on_click=lambda: self.step(-step)).props('flat dense round').classes('term-cal-arrow') \
+                    .tooltip('The year before' if self.picking_month else 'The month before')
+                ui.button(icon='arrow_downward', on_click=lambda: self.step(step)).props('flat dense round').classes('term-cal-arrow') \
+                    .tooltip('The year after' if self.picking_month else 'The month after')
+            if self.picking_month:
+                with ui.element('div').classes('term-cal-months'):
+                    for n, name in enumerate(MONTHS, 1):
+                        ui.label(name[:3]).classes('term-cal-cell' + (' on' if n == self.month.month else '')) \
+                            .on('click', lambda n=n: self.choose_month(n))
+            else:
+                with ui.element('div').classes('term-cal-days'):
+                    for name in ('Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'):
+                        ui.label(name).classes('term-cal-wd')
+                    first = self.month - timedelta(days=self.month.weekday())
+                    for i in range(42):
+                        day = first + timedelta(days=i)
+                        cls = 'term-cal-cell' + ('' if day.month == self.month.month else ' out') + \
+                            (' today' if day.isoformat() == today else '') + (' on' if day.isoformat() == chosen else '')
+                        ui.label(str(day.day)).classes(cls).on('click', lambda day=day: self.pick(day))
+            with ui.row().classes('term-cal-foot no-wrap'):
+                ui.label('Clear').classes('term-cal-link').on('click', lambda: self.pick(None))
+                ui.space()
+                ui.label('Today').classes('term-cal-link').on('click', lambda: self.pick(date.today()))
 
 
 def number(value, cast=int):
@@ -80,17 +203,21 @@ def apply_theme(settings: dict) -> None:
               positive=text, negative='#ff5a4a', warning='#ffb642', info=text)
 
 
+# menu sections whose items can be dragged into another order -> the setting the order is saved in
+SORTABLE = {'INDEXES': 'index_order', 'BOOKSHELF SIMULATION': 'sim_order'}
+
+
 def menu_sections(settings: dict) -> list[tuple[str | None, list[tuple[str, str]]]]:
-    """MENU as (section, entries); the INDEXES come in the order they were dragged into."""
+    """MENU as (section, entries); the SORTABLE sections come in the order they were dragged into."""
     sections = [(None, [])]
     for entry in MENU:
         if isinstance(entry, str):
             sections.append((entry, []))
         else:
             sections[-1][1].append(entry)
-    saved = settings.get('index_order', [])
     for name, entries in sections:
-        if name == 'INDEXES':  # ones not in the saved order (new in a later version) go last
+        if name in SORTABLE:  # ones not in the saved order (new in a later version) go last
+            saved = settings.get(SORTABLE[name], [])
             entries.sort(key=lambda e: saved.index(e[0]) if e[0] in saved else len(saved))
     return sections
 
@@ -117,15 +244,26 @@ def shell() -> None:
                         f'draggable=false data-label="{label}"')
                     links[label].on('click', drawer.hide,
                                     js_handler=f'() => {{ if (window.innerWidth < {MOBILE_WIDTH}) emit() }}')
-            if name == 'INDEXES':  # dragged into another order by window.termSortable below
+            if name in SORTABLE:  # dragged into another order by the script below
                 group.classes('term-sortable').props('title="Drag to change the order"')
-                group.on('reorder', lambda e, group=group: save_index_order(e.args['detail'], group), ['detail'])
+                group.on('reorder', lambda e, group=group, key=SORTABLE[name]: save_order(key, e.args['detail'], group),
+                         ['detail'])
         ui.label(f'{date.today():%Y-%m-%d}  //  TERMINAL READY').classes('term-hint')
     burger.on_click(drawer.toggle)
 
-    def save_index_order(order: list[str], group: ui.element) -> None:
+    def sim_view(e) -> None:  # the 3D room changed view by itself, or a menu item switched it (see below)
+        label = SIM_VIEWS[e.args['path']][0]
+        set_active(label)
+        ui.page_title(f'JOEY LIBRARY - {label}')
+        if ui.context.client.shell.get('title'):
+            ui.context.client.shell['title'].set_text(f'> {label}')
+        if e.args.get('narrow'):
+            drawer.hide()
+    ui.on('sim_view', sim_view)
+
+    def save_order(key: str, order: list[str], group: ui.element) -> None:
         current = backup.load_settings()
-        current['index_order'] = order
+        current[key] = order
         backup.save_settings(current)
         for i, label in enumerate(order):  # the browser has moved them already; keep the server's copy the same
             links[label].move(group, target_index=i)
@@ -152,7 +290,27 @@ def shell() -> None:
     });
     window.addEventListener('resize', termFit);
     setInterval(termFit, 300);
-    // the INDEXES in the menu: drag one with the mouse (press and hold on a phone) to move it; the order is
+    // name fields (.term-names, the authors): Enter or Tab takes the suggestion highlighted with the arrow keys, or
+    // the one spelled the same, or else adds what was typed as a new name; Tab then goes on to the next field
+    document.addEventListener('keydown', e => {
+      if ((e.key !== 'Enter' && e.key !== 'Tab') || e.shiftKey || e.isComposing) return;
+      const vm = e.target.closest && e.target.closest('.term-names') && e.target.id && getElement(e.target), q = vm && vm.$refs.qRef;  // the id is on the input
+      if (!q) return;
+      const text = (e.target.value || '').trim(), low = text.toLowerCase(), label = o => String(o.label).toLowerCase();
+      // the highlighted one counts only if it matches what is typed (the list may not have caught up yet)
+      const open = document.documentElement.classList.contains('nicegui-select-popup-open'), i = open ? q.getOptionIndex() : -1;
+      const lit = i > -1 && (vm.filteredOptions || [])[i];
+      const pick = (lit && label(lit).includes(low) && lit) || (text && (vm.initialOptions || []).find(o => label(o) === low));
+      if (!pick && !text) return;
+      if (e.key === 'Enter') e.preventDefault();
+      e.stopPropagation();
+      if (pick) { if (!q.isOptionSelected(pick)) q.toggleOption(pick, true); }
+      else q.add(text, true);
+      q.updateInputValue('', true);
+      q.hidePopup();
+      setTimeout(() => q.hidePopup(), 200);  // a new name changes the options, which opens the list again
+    }, true);
+    // the INDEXES and BOOKSHELF SIMULATION items in the menu: drag one with the mouse (press and hold on a phone) to move it; the order is
     // then sent to the server, which saves it
     document.addEventListener('pointerdown', (down) => {
       const item = down.target.closest('.term-sortable > .term-menu');
@@ -224,6 +382,22 @@ def shell() -> None:
     };
     // freezing puts the column leftmost among the frozen ones (after Serial, which is always first);
     // unfreezing puts it right after them
+    // the 3D room stays loaded while its menu items only switch its view; the room tells which view it shows
+    const termSimViews = __SIM_VIEWS__;
+    const termSimPath = (view) => Object.keys(termSimViews).find(p => termSimViews[p] === view);
+    document.addEventListener('click', (e) => {
+      const link = e.target.closest('a.term-menu'), frame = document.getElementById('simFrame');
+      const path = link && new URL(link.href).pathname;
+      if (!frame || !termSimViews[path]) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      frame.contentWindow.postMessage({type: 'sim-show', view: termSimViews[path]}, location.origin);
+    }, true);
+    window.addEventListener('message', (e) => {
+      const path = e.origin === location.origin && e.data && e.data.type === 'sim-view' && termSimPath(e.data.view);
+      if (!path || !document.getElementById('simFrame')) return;
+      if (location.pathname !== path) history.pushState(history.state, '', path);
+      emitEvent('sim_view', {path, narrow: window.innerWidth < __MOBILE__});
+    });
     window.termFreeze = (api, field, freeze) => {
       const state = api.getColumnState();
       const [column] = state.splice(state.findIndex(s => s.colId === field), 1);
@@ -232,8 +406,19 @@ def shell() -> None:
       state.splice(freeze ? locked : state.filter(s => s.pinned).length, 0, column);
       api.applyColumnState({state, applyOrder: true});
     };
-    </script>''')
+    </script>'''.replace('__SIM_VIEWS__', json.dumps({p: v for p, (_, v) in SIM_VIEWS.items()}))
+                     .replace('__MOBILE__', str(MOBILE_WIDTH)))
     ui.context.client.shell = {'banner': banner, 'status': status, 'links': links}
+
+
+def set_active(active: str) -> None:
+    """Mark the menu item of the page being shown."""
+    for label, link in ui.context.client.shell['links'].items():
+        if label == active:
+            link.classes(add='active')
+        else:
+            link.classes(remove='active')
+        link.update()  # also when the server's copy did not change: the room may have marked another item
 
 
 def frame(active: str) -> None:
@@ -246,12 +431,8 @@ def frame(active: str) -> None:
     shell_parts = ui.context.client.shell
     shell_parts['banner'].set_text(settings.get('title') or backup.DEFAULT_TITLE)
     shell_parts['status'].set_text(f'LIBRARY OS v1.0  //  {owned} VOLUMES ON FILE  //  LAST BACKUP: {last}')
-    for label, link in shell_parts['links'].items():
-        if label == active:
-            link.classes(add='active')
-        else:
-            link.classes(remove='active')
-    ui.label(f'> {active}').classes('term-title')
+    set_active(active)
+    shell_parts['title'] = ui.label(f'> {active}').classes('term-title')
 
 
 # ---------- the book form, used for inserting and editing ----------
@@ -270,9 +451,12 @@ class BookForm:
                 button('LOOKUP', self.lookup)
             self.status = ui.label('').classes('term-faint')
             self.title = ui.input('TITLE', value=b.get('Title') or '').classes('w-full')
-            self.authors = ui.select(db.names('Authors'), label='AUTHOR(S)  - main author first, ENTER adds a new name',
+            self.authors = ui.select(db.names('Authors'), label='AUTHOR(S)  - main author first, ENTER or TAB adds the name',
                                      multiple=True, with_input=True, new_value_mode='add-unique',
-                                     value=b.get('AuthorList', [])).props('use-chips hide-dropdown-icon').classes('w-full')
+                                     value=b.get('AuthorList', [])).props('use-chips hide-dropdown-icon').classes('w-full term-names')
+            # an author picked from the list closes it (Enter and Tab: see term-names in the page script)
+            self.authors.on_value_change(lambda: (self.authors.run_method('updateInputValue', '', True),
+                                                  self.authors.run_method('hidePopup')))
             self.genres = ui.select(db.names('Genres'), label='GENRES  - ENTER adds a new genre',
                                     multiple=True, with_input=True, new_value_mode='add-unique',
                                     value=b.get('GenreList', [])).props('use-chips hide-dropdown-icon').classes('w-full')
@@ -300,8 +484,8 @@ class BookForm:
                 current = readings[-1] if readings else {}
                 self.history_box = ui.column().classes('w-full gap-0')
                 with ui.row().classes('items-end gap-x-6 gap-y-1'):
-                    self.started = ui.input('STARTED', value=current.get('StartedDate') or '').props('type=date stack-label')
-                    self.finished = ui.input('FINISHED', value=current.get('FinishedDate') or '').props('type=date stack-label')
+                    self.started = DateInput('STARTED', current.get('StartedDate'))
+                    self.finished = DateInput('FINISHED', current.get('FinishedDate'))
                     button('NEW READING', self.new_reading).tooltip(
                         'Reading it again: the dates above go into the reading history and a new reading starts today')
                 with ui.row().classes('gap-6'):
@@ -320,19 +504,18 @@ class BookForm:
                 ui.label(f'EARLIER READINGS ({len(readings)})').classes('term-dim mt-2')
             for r in readings:
                 with ui.row().classes('items-end gap-x-6 gap-y-1'):
-                    pair = (ui.input('STARTED', value=r.get('StartedDate') or '').props('type=date stack-label'),
-                            ui.input('FINISHED', value=r.get('FinishedDate') or '').props('type=date stack-label'))
+                    pair = (DateInput('STARTED', r.get('StartedDate')), DateInput('FINISHED', r.get('FinishedDate')))
                     button('X', lambda pair=pair: self.remove_earlier(pair), danger=True).tooltip('Delete this reading')
                 self.earlier.append(pair)
 
     def earlier_values(self) -> list[dict]:
-        return [{'StartedDate': s.value or None, 'FinishedDate': f.value or None} for s, f in self.earlier]
+        return [{'StartedDate': s.iso or None, 'FinishedDate': f.iso or None} for s, f in self.earlier]
 
     def remove_earlier(self, pair: tuple) -> None:
         self.show_earlier([r for p, r in zip(self.earlier, self.earlier_values()) if p is not pair])
 
     def current_reading(self) -> dict:
-        return {'StartedDate': self.started.value or None, 'FinishedDate': self.finished.value or None}
+        return {'StartedDate': self.started.iso or None, 'FinishedDate': self.finished.iso or None}
 
     def new_reading(self) -> None:
         """Reading the book again: the current dates join the history and a new reading starts today."""
@@ -340,8 +523,8 @@ class BookForm:
         if any(self.current_reading().values()):
             earlier.append(self.current_reading())
         self.show_earlier(earlier)
-        self.started.value = date.today().isoformat()
-        self.finished.value = ''
+        self.started.iso = date.today().isoformat()
+        self.finished.iso = ''
         ui.notify('NEW READING STARTED. SAVE TO KEEP IT.')
 
     def set_kind(self, kind: str) -> None:
@@ -397,6 +580,8 @@ class BookForm:
         title = (self.title.value or '').strip()
         if not title or not self.authors.value:
             ui.notify('A BOOK NEEDS A TITLE AND AT LEAST ONE AUTHOR.', type='warning')
+            return None
+        if self.kind == 'owned' and not DateInput.check(*(f for pair in self.earlier for f in pair), self.started, self.finished):
             return None
         data = {
             'Title': title,
@@ -467,13 +652,17 @@ def open_editor(kind: str, book_id: int, on_change) -> None:
             delete_btn.set_text('[ CONFIRM DELETE ]')
             return
         db.delete_book(kind, book_id)
+        if kind == 'owned':
+            roomdb.forget_book(book_id)
         done(f"{book['Title'].upper()} DELETED.")
 
     def lend() -> None:
         if not borrower.value:
             ui.notify('WHO IS BORROWING IT?', type='warning')
             return
-        db.lend(book_id, borrower.value, lend_date.value or None)
+        if not DateInput.check(lend_date):
+            return
+        db.lend(book_id, borrower.value, lend_date.iso or None)
         done(f"{book['Title'].upper()} IS NOW ON LOAN TO {borrower.value.upper()}.")
 
     with ui.dialog() as dialog, ui.card().classes('term-card w-full max-w-5xl'):
@@ -492,7 +681,7 @@ def open_editor(kind: str, book_id: int, on_change) -> None:
                 with ui.row().classes('items-end gap-4 w-full'):
                     borrower = ui.select(db.borrowers(), label='BORROWER', with_input=True,
                                          new_value_mode='add-unique').classes('min-w-[220px]')
-                    lend_date = ui.input('DATE', value=date.today().isoformat()).props('type=date stack-label')
+                    lend_date = DateInput('DATE', date.today().isoformat())
                     button('CHECK OUT', lend)
         with ui.row().classes('gap-2 flex-wrap'):
             button('SAVE', save)
@@ -837,13 +1026,15 @@ def loans_page() -> None:
     with ui.row().classes('items-end gap-4 w-full'):
         book = ui.select({}, label='BOOK', with_input=True).classes('min-w-[340px] grow')
         borrower = ui.select(db.borrowers(), label='BORROWER', with_input=True, new_value_mode='add-unique').classes('min-w-[220px]')
-        when = ui.input('DATE', value=date.today().isoformat()).props('type=date stack-label')
+        when = DateInput('DATE', date.today().isoformat())
 
         def lend() -> None:
             if not book.value or not borrower.value:
                 ui.notify('CHOOSE A BOOK AND WHO IS BORROWING IT.', type='warning')
                 return
-            db.lend(book.value, borrower.value, when.value or None)
+            if not DateInput.check(when):
+                return
+            db.lend(book.value, borrower.value, when.iso or None)
             ui.notify(f'NOW ON LOAN TO {borrower.value.upper()}.')
             book.value = None
             render()
@@ -913,14 +1104,16 @@ def reading_history_page() -> None:
         with detail:
             ui.label(f"> {row['Serial']}  {row['Title'].upper()}").classes('term-sub')
             ui.label(f"{row['Authors'] or ''}  //  READING #{row['ReadingNo']}").classes('term-dim')
-            started = ui.input('STARTED', value=row['StartedDate'] or '').props('type=date stack-label')
-            finished = ui.input('FINISHED', value=row['FinishedDate'] or '').props('type=date stack-label')
+            started = DateInput('STARTED', row['StartedDate'])
+            finished = DateInput('FINISHED', row['FinishedDate'])
 
             def save() -> None:
-                if not started.value and not finished.value:
+                if not DateInput.check(started, finished):
+                    return
+                if not started.iso and not finished.iso:
                     ui.notify('A READING NEEDS A START OR A FINISH DATE. DELETE IT INSTEAD.', type='warning')
                     return
-                db.update_reading(row['ReadingID'], started.value, finished.value)
+                db.update_reading(row['ReadingID'], started.iso or None, finished.iso or None)
                 ui.notify('READING SAVED.')
                 detail.clear()
                 refresh()
@@ -1052,6 +1245,9 @@ def settings_page() -> None:
         last = current.get('last_backup')
         text = f"LAST BACKUP: {last.replace('T', ' ') if last else 'NEVER'}\n"
         text += '\n'.join(f'  {f.name}   {f.stat().st_size // 1024} KB' for f in files[:8]) or '  NO BACKUPS IN THIS FOLDER YET'
+        rooms = backup.list_backups(current['backup_dir'], 'room')
+        if rooms:  # the 3D room's own database, backed up alongside
+            text += f'\n  ROOM: {rooms[0].name}   {rooms[0].stat().st_size // 1024} KB'
         listing.set_text(text)
 
     def save_backup_settings() -> None:
@@ -1090,6 +1286,7 @@ def settings_page() -> None:
     google_key = ui.input('GOOGLE BOOKS API KEY (FREE, SEE README; EMPTY = SHARED QUOTA THAT IS OFTEN USED UP)',
                           value=settings['google_books_key'], password=True, password_toggle_button=True).classes('w-full max-w-4xl')
     ui.label(f'DATABASE FILE: {db.DB_PATH}').classes('term-faint')
+    ui.label(f'3D ROOM DATABASE FILE: {roomdb.DB_PATH}').classes('term-faint')
     library_status = ui.label('').classes('term-dim')
 
     def save_library_settings() -> None:
@@ -1187,6 +1384,22 @@ async def choose_folder(target: ui.input) -> None:
     dialog.open()
 
 
+# ---------- the bookshelf simulation: the 3D room in a frame (sim.py serves it and its data) ----------
+
+def bookshelf_page(path: str) -> None:
+    label, view = SIM_VIEWS[path]
+    frame(label)
+    text, bg = theme_colors(backup.load_settings())
+    ui.element('iframe').props(f'id=simFrame allow=fullscreen title="{label}" '
+                               f'src="/sim-files/index.html?lib=1&view={view}&fg={text[1:]}&bg={bg[1:]}"')         .classes('w-full term-fit term-sim').style('min-height: 420px')
+
+
+def bookshelf_route(path: str):
+    def page() -> None:
+        bookshelf_page(path)
+    return page
+
+
 # ---------- one page for the whole app: switching menu items only swaps the content, no reload ----------
 
 ROUTES = {
@@ -1203,6 +1416,7 @@ ROUTES = {
     '/reading-history': reading_history_page,
     '/stats': stats_page,
     '/settings': settings_page,
+    **{path: bookshelf_route(path) for path in SIM_VIEWS},
 }
 
 

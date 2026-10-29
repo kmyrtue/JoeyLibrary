@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from . import db
+from . import db, roomdb
 
 CONFIG_DIR = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'joey-library'
 SETTINGS_FILE = CONFIG_DIR / 'settings.json'
@@ -62,9 +62,10 @@ def save_settings(settings: dict) -> None:
     SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding='utf-8')
 
 
-def list_backups(backup_dir: str) -> list[Path]:
+def list_backups(backup_dir: str, name: str = 'library') -> list[Path]:
+    """The dated copies of one database, newest first: name 'library' (library.db) or 'room' (the 3D room's room.db)."""
     folder = Path(backup_dir)
-    return sorted(folder.glob('library_2*.db'), reverse=True) if folder.is_dir() else []
+    return sorted(folder.glob(f'{name}_2*.db'), reverse=True) if folder.is_dir() else []
 
 
 def backup_now() -> Path:
@@ -77,23 +78,32 @@ def backup_now() -> Path:
         raise FileNotFoundError(f'{folder.parent} does not exist. Is Dropbox installed and running?')
     folder.mkdir(exist_ok=True)
 
-    dest = folder / f"library_{datetime.now():%Y-%m-%d_%H%M%S}.db"
-    src = sqlite3.connect(db.DB_PATH)
+    stamp = f'{datetime.now():%Y-%m-%d_%H%M%S}'
+    dest = _copy(db.DB_PATH, folder, 'library', stamp, int(settings['keep']))
+    # the 3D room is backed up next to it in files of its own, so either one can be restored without the other
+    if roomdb.DB_PATH.exists():
+        _copy(roomdb.DB_PATH, folder, 'room', stamp, int(settings['keep']))
+
+    settings['last_backup'] = datetime.now().isoformat(timespec='seconds')
+    save_settings(settings)
+    return dest
+
+
+def _copy(path: Path, folder: Path, name: str, stamp: str, keep: int) -> Path:
+    """A consistent copy of one database as name_<stamp>.db and name_latest.db; keeps the newest `keep` dated copies."""
+    dest = folder / f'{name}_{stamp}.db'
+    src = sqlite3.connect(path)
     out = sqlite3.connect(dest)
     try:
         src.backup(out)  # safe even while the app has the database open
     finally:
         out.close()
         src.close()
-    # library_latest.db is always the newest copy, so restoring means copying one file back
-    latest = folder / 'library_latest.db'
-    tmp = folder / 'library_latest.db.tmp'
+    # name_latest.db is always the newest copy, so restoring means copying one file back
+    latest = folder / f'{name}_latest.db'
+    tmp = folder / f'{name}_latest.db.tmp'
     tmp.write_bytes(dest.read_bytes())
     tmp.replace(latest)
-
-    for old in list_backups(str(folder))[max(1, int(settings['keep'])):]:
+    for old in list_backups(str(folder), name)[max(1, keep):]:
         old.unlink(missing_ok=True)
-
-    settings['last_backup'] = datetime.now().isoformat(timespec='seconds')
-    save_settings(settings)
     return dest

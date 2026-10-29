@@ -7,7 +7,7 @@ from pathlib import Path
 from nicegui import app, ui
 
 from . import app as _pages  # noqa: F401  (registers the pages)
-from . import backup, db
+from . import backup, db, roomdb
 
 parser = argparse.ArgumentParser(prog='joeylibrary')
 parser.add_argument('--browser', action='store_true', help='open in the web browser instead of an app window')
@@ -16,6 +16,7 @@ parser.add_argument('--no-show', action='store_true', help='do not open a browse
 args, _ = parser.parse_known_args()
 
 db.init_db()
+roomdb.init_db()  # the 3D room has its own database, so nothing done there can harm the library
 
 native = not args.browser
 if native:
