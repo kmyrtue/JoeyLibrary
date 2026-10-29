@@ -800,7 +800,9 @@
     // lying somewhere (a room point, her heading, the pose) for a few minutes; she starts out on the couch
     function settle(at, heading, kind) {
       cat.place(W(...at), heading); cat.goTo(W(...at), {});
-      cat.startRest(kind); cat.C.restW = 1; cat.C.heading = heading;
+      // and still: speed or a turn left over from walking would carry her on lying down, some 12 cm a time, and the
+      // place kept each time she was opened again crept until she lay inside the couch's arm
+      cat.startRest(kind); cat.C.restW = 1; cat.C.heading = heading; cat.C.speed = 0; cat.C.turnRate = 0;
       cat.update(1 / 60); cat.C.hop = null; cat.C.lift = cat.C.liftTo; cat.inner.position.y = cat.C.lift;
     }
     settle(seatC, Math.PI, Math.random() < 0.6 ? 'side' : 'loaf');

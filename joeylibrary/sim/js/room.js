@@ -244,7 +244,28 @@
     trim(dr - 465, dr - 420, y1, ct - 0.5, kdh - 72, kdh - 40, D.steel, null, 2);
     solidBox(dl, dr, -T, y1, 0, kdh);
   }
-  box(-rc - T, w + nk + T, L, L + T, 0, lch, COL.plaster, 'room', null, 'plaster');
+  // the end wall, with a glass door in it at the end of the passage beside the box room (the user's description; no
+  // photo yet). Estimated: 90 x 205 cm, in the middle of the passage, a white frame with one big pane, the lever on the
+  // box room side and the hinges by the brick wall; the glass is drawn as the window's, unlit.
+  const gdw = 900, gdh = 2050, gx0 = Math.round((m.box_room_width + w) / 2 - gdw / 2), gx1 = gx0 + gdw;
+  box(-rc - T, gx0, L, L + T, 0, lch, COL.plaster, 'room', null, 'plaster'); box(gx1, w + nk + T, L, L + T, 0, lch, COL.plaster, 'room', null, 'plaster');
+  box(gx0, gx1, L, L + T, gdh, lch, COL.plaster, 'room', null, 'plaster');
+  {
+    const D = DOOR, WH = [COL.frame, null], cw = 60, ct = 12, lt = 25, k = doorKit('x', L + 15, -1);
+    trim(gx0 - cw, gx0, L - ct, L, 0, gdh + cw, ...WH, 2.5); trim(gx1, gx1 + cw, L - ct, L, 0, gdh + cw, ...WH, 2.5); trim(gx0, gx1, L - ct, L, gdh, gdh + cw, ...WH, 2.5);
+    trim(gx0, gx0 + lt, L, L + T, 0, gdh, ...WH); trim(gx1 - lt, gx1, L, L + T, 0, gdh, ...WH); trim(gx0 + lt, gx1 - lt, L, L + T, gdh - lt, gdh, ...WH);
+    const l0 = gx0 + lt + D.gap, l1 = gx1 - lt - D.gap, lz = gdh - lt - D.gap, S = 110, zb = D.under + 230, gz = lz - 110, t = D.t;
+    k.box(l0, l0 + S, -t, 0, D.under, lz, ...WH, 2); k.box(l1 - S, l1, -t, 0, D.under, lz, ...WH, 2);
+    k.box(l0 + S, l1 - S, -t, 0, gz, lz, ...WH, 2); k.box(l0 + S, l1 - S, -t, 0, D.under, zb, ...WH, 2);
+    // the glazing beads, a little proud of the leaf round the pane
+    [[l0 + S, l0 + S + 14, zb, gz], [l1 - S - 14, l1 - S, zb, gz], [l0 + S, l1 - S, zb, zb + 14], [l0 + S, l1 - S, gz - 14, gz]]
+      .forEach(([a, b, z0, z1]) => k.box(a, b, -t + 4, 6, z0, z1, ...WH, 2));
+    const gl = k.box(l0 + S, l1 - S, -t / 2 - 3, -t / 2 + 3, zb, gz, COL.glass, null, 0, { transparent: true, opacity: 0.35 }), pt = parts[parts.length - 1];
+    pt.flat = pt.textured = gl.material = new THREE.MeshBasicMaterial({ color: 0xbddbdf, transparent: true, opacity: 0.35 });
+    k.hinges(l1 + D.gap / 2, D.under, lz);
+    k.lever(l0 + D.hin, 1);
+    solidBox(gx0, gx1, L, L + T, 0, gdh);
+  }
   // white walls on the low ceilings, the ceilings
   // the walls above the low ceilings start on top of the ceiling boards; starting level with their underside made the
   // ends of the boards flicker into the wall
@@ -256,8 +277,18 @@
   // box room
   const bd = m.box_room_depth, bw = m.box_room_width, bh = m.box_room_height, bf = L - bd, t = 100;
   const bda = bf + m.box_door_from_front, bdb = bda + m.box_door_width, bdh = m.box_door_height;
+  // a niche for jackets in its side wall to the passage, by the end wall (the user's description: about 1 m wide, 2 m
+  // tall, 10 cm up from the floor and 10 cm from the end wall, 40 cm deep; estimated, not measured)
+  const ny1 = L - 100, ny0 = ny1 - 1000, nz0 = 100, nz1 = nz0 + 2000, nd = 400;
   box(0, bw, bf, bf + t, 0, bh, COL.plaster, 'room', null, 'plaster');
-  box(bw - t, bw, bf + t, bda, 0, bh, COL.plaster, 'room', null, 'plaster'); box(bw - t, bw, bdb, L, 0, bh, COL.plaster, 'room', null, 'plaster'); box(bw - t, bw, bda, bdb, bdh, bh, COL.plaster, 'room', null, 'plaster');
+  box(bw - t, bw, bf + t, bda, 0, bh, COL.plaster, 'room', null, 'plaster'); box(bw - t, bw, bdb, ny0, 0, bh, COL.plaster, 'room', null, 'plaster'); box(bw - t, bw, ny1, L, 0, bh, COL.plaster, 'room', null, 'plaster');
+  box(bw - t, bw, ny0, ny1, nz1, bh, COL.plaster, 'room', null, 'plaster'); box(bw - t, bw, ny0, ny1, 0, nz0 - 30, COL.plaster, 'room', null, 'plaster');
+  // the niche is a plastered box 40 cm into the box room; its floor is a board of the window sill's wood, out over the
+  // edge as the sill is (4 cm out from the wall, 4 cm past the opening each side, 3 cm thick)
+  box(bw - nd - 20, bw - nd, ny0 - 20, ny1 + 20, nz0 - 30, nz1 + 20, COL.plaster, 'room', null, 'plaster');
+  box(bw - nd, bw - t, ny0 - 20, ny0, nz0 - 30, nz1 + 20, COL.plaster, 'room', null, 'plaster'); box(bw - nd, bw - t, ny1, ny1 + 20, nz0 - 30, nz1 + 20, COL.plaster, 'room', null, 'plaster');
+  box(bw - nd, bw - t, ny0, ny1, nz1, nz1 + 20, COL.plaster, 'room', null, 'plaster');
+  box(bw - nd, bw + 40, ny0 - 40, ny1 + 40, nz0 - 30, nz0, COL.shelf, 'room', null, 'oak'); box(bw - t, bw, bda, bdb, bdh, bh, COL.plaster, 'room', null, 'plaster');
   // its door: a pale casing (60 x 12) on the passage side, the opening lined, and the panelled pine leaf of the nooks set
   // 15 mm in, opening into the box room (estimated: no photo shows it but for the casing's edge)
   {
