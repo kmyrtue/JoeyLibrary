@@ -17,6 +17,7 @@ ui.add_css(HERE / 'static' / 'terminal.css', shared=True)
 MENU = [
     ('INSERT BOOK', '/insert'),
     ('BOOKS', '/'),
+    ('DIGITAL', '/digital'),
     ('ON LOAN', '/loans'),
     ('WISHLIST', '/wishlist'),
     ('STATISTICS', '/stats'),
@@ -43,7 +44,9 @@ SIM_VIEWS = {'/bookshelf': ('BOOKSHELF SIMULATION', 'vRoom'), '/bookshelf/worksh
              '/bookshelf/types': ('BOOK TYPES', 'vTypes')}
 MOBILE_WIDTH = 768  # narrower than this is laid out for phones (see terminal.css)
 PHONE_TITLE_WIDTH = 140  # starting width of the Title column on a phone; dragging its edge changes it
-KIND_NAMES = {'owned': 'LIBRARY', 'wished': 'WISHLIST'}
+KIND_NAMES = {'owned': 'LIBRARY', 'digital': 'DIGITAL', 'wished': 'WISHLIST'}
+# a digital book is an ebook or an audiobook; a wished book can also be a printed book (it says which list it goes to)
+MEDIUM_NAMES = {'Book': 'BOOK', 'Ebook': 'EBOOK', 'Audiobook': 'AUDIOBOOK'}
 RATINGS = {None: '-', 0: '0', 1: '* (1)', 2: '** (2)', 3: '*** (3)', 4: '**** (4)', 5: '***** (5)'}
 CHILI = '\U0001F336'
 SPICE = {None: '-', 0: '0  (NOT SPICY)', **{n: f'{CHILI * n}  ({n})' for n in range(1, 6)}}
@@ -52,7 +55,9 @@ KINK = {None: '-', 0: '0  (NOT KINKY)', **{n: f'{CHAINS * n}  ({n})' for n in ra
 
 
 def button(text: str, on_click=None, danger: bool = False) -> ui.button:
-    b = ui.button(f'[ {text} ]', on_click=on_click).props('flat no-caps').classes('term-btn')
+    # no colour class: Quasar's .text-primary is !important in a cascade layer, which beats terminal.css even with
+    # !important, so the inverted text on hover (and on a chosen filter button) came out green on green
+    b = ui.button(f'[ {text} ]', on_click=on_click, color=None).props('flat no-caps').classes('term-btn')
     if danger:
         b.classes('danger')
     return b
@@ -172,6 +177,21 @@ class DateInput(ui.input):
 
 def number(value, cast=int):
     return None if value in (None, '') else cast(value)
+
+
+def hours_minutes(minutes: int | None) -> str:
+    return '' if minutes is None else f'{minutes // 60}:{minutes % 60:02d}'
+
+
+def parse_length(text: str | None) -> int | None:
+    """An audiobook's length typed as H:MM (or whole hours) -> minutes; ValueError if it is neither."""
+    text = (text or '').strip()
+    if not text:
+        return None
+    found = re.fullmatch(r'(\d+)(?::([0-5]?\d))?', text)
+    if not found:
+        raise ValueError(text)
+    return int(found.group(1)) * 60 + int(found.group(2) or 0)
 
 
 # ---------- colours: two chosen colours, everything else is mixed from them ----------
@@ -464,6 +484,9 @@ class BookForm:
                                   multiple=True, with_input=True, new_value_mode='add-unique',
                                   value=b.get('TagList', [])).props('use-chips hide-dropdown-icon').classes('w-full')
             with ui.element('div').classes('grid grid-cols-1 md:grid-cols-4 gap-x-6 w-full'):
+                # EBOOK / AUDIOBOOK for a digital book; a wished book can also be a BOOK (see set_kind)
+                self.medium = ui.select(MEDIUM_NAMES, label='TYPE', value=b.get('Medium'))
+                self.medium.on_value_change(lambda: self.show_medium())
                 self.edition = ui.input('EDITION', value=b.get('Edition') or '')
                 self.format = ui.select(db.names('Formats'), label='FORMAT', with_input=True, clearable=True,
                                         new_value_mode='add-unique', value=b.get('FormatName'))
@@ -473,8 +496,16 @@ class BookForm:
                 self.spice = ui.select(SPICE, label='SPICE', value=b.get('Spice'))
                 self.kink = ui.select(KINK, label='KINK', value=b.get('Kink'))
             self.signed = ui.checkbox('SIGNED', value=bool(b.get('Signed')))
-            self.owned_box = ui.column().classes('w-full gap-1')
-            with self.owned_box:
+            # digital books: where it lives, and for an audiobook who reads it and how long it is
+            self.digital_box = ui.element('div').classes('grid grid-cols-1 md:grid-cols-4 gap-x-6 w-full')
+            with self.digital_box:
+                self.source = ui.select(db.sources(), label='SOURCE', with_input=True,
+                                        clearable=True, new_value_mode='add-unique', value=b.get('Source'))
+                self.narrator = ui.input('NARRATOR', value=b.get('Narrator') or '')
+                self.length = ui.input('LENGTH  (H:MM)', value=hours_minutes(b.get('Length')))
+            # library and digital books: pages, rating and the reading history
+            self.log_box = ui.column().classes('w-full gap-1')
+            with self.log_box:
                 with ui.element('div').classes('grid grid-cols-1 md:grid-cols-4 gap-x-6 w-full'):
                     self.pages = ui.number('PAGES', value=b.get('PageCount'), min=0, precision=0)
                     self.shelf = ui.number('SHELF NO.', value=b.get('ShelfNumber'), min=0, precision=0)
@@ -529,7 +560,26 @@ class BookForm:
 
     def set_kind(self, kind: str) -> None:
         self.kind = kind
-        self.owned_box.set_visibility(kind == 'owned')
+        self.log_box.set_visibility(kind in db.READ_BY)
+        self.shelf.set_visibility(kind == 'owned')
+        self.edge.set_visibility(kind == 'owned')
+        self.format.set_visibility(kind in db.HAS_FORMAT)
+        self.signed.set_visibility(kind != 'digital')
+        self.digital_box.set_visibility(kind == 'digital')
+        # a digital book's pages are those of the printed book it equates to
+        self.pages.props(f'label="{"PRINTED PAGES" if kind == "digital" else "PAGES"}"')
+        self.medium.set_visibility(kind != 'owned')
+        if kind == 'digital':
+            self.medium.set_options({m: MEDIUM_NAMES[m] for m in db.MEDIUMS},
+                                    value=self.medium.value if self.medium.value in db.MEDIUMS else 'Ebook')
+        else:
+            self.medium.set_options(MEDIUM_NAMES, value=self.medium.value or 'Book')
+        self.show_medium()
+
+    def show_medium(self) -> None:
+        audio = self.kind == 'digital' and self.medium.value == 'Audiobook'
+        self.narrator.set_visibility(audio)
+        self.length.set_visibility(audio)
 
     async def lookup(self) -> None:
         code = isbn_lookup.clean(self.isbn.value)
@@ -562,6 +612,8 @@ class BookForm:
         if found.get('Format'):
             self.format.set_options(sorted(set(self.format.options) | {found['Format']}, key=str.lower))
             self.format.value = found['Format']
+        if found.get('Format') == isbn_lookup.AUDIOBOOK and self.kind != 'owned':
+            self.medium.value = 'Audiobook'
         details = ', '.join(x for x in (found.get('Publisher'), found.get('Year')) if x)
         message = f"RECORD FOUND IN {found['Source'].upper()}" + (f'  //  {details}' if details else '')
         if found.get('Format') == isbn_lookup.AUDIOBOOK:
@@ -581,7 +633,13 @@ class BookForm:
         if not title or not self.authors.value:
             ui.notify('A BOOK NEEDS A TITLE AND AT LEAST ONE AUTHOR.', type='warning')
             return None
-        if self.kind == 'owned' and not DateInput.check(*(f for pair in self.earlier for f in pair), self.started, self.finished):
+        if self.kind in db.READ_BY and not DateInput.check(*(f for pair in self.earlier for f in pair), self.started, self.finished):
+            return None
+        audio = self.kind == 'digital' and self.medium.value == 'Audiobook'
+        try:
+            length = parse_length(self.length.value) if audio else None
+        except ValueError:
+            ui.notify('LENGTH IS HOURS AND MINUTES, LIKE 11:45.', type='warning')
             return None
         data = {
             'Title': title,
@@ -597,25 +655,38 @@ class BookForm:
             'Signed': int(bool(self.signed.value)),
             'ISBN': (self.isbn.value or '').strip() or None,
         }
-        if self.kind == 'owned':
+        if self.kind != 'owned':
+            data['Medium'] = self.medium.value
+        if self.kind in db.READ_BY:
             readings = [r for r in self.earlier_values() + [self.current_reading()] if any(r.values())]
             data.update({
                 'PageCount': number(self.pages.value),
-                'ShelfNumber': number(self.shelf.value),
                 'Rating': self.rating.value,
                 'Readings': readings,
                 # a finished reading means it has been read
                 'Read': int(bool(self.read.value or any(r['FinishedDate'] for r in readings))),
-                'EdgeOut': int(bool(self.edge.value)),
                 'Comments': (self.comments.value or '').strip() or None,
+            })
+        if self.kind == 'owned':
+            data.update({
+                'ShelfNumber': number(self.shelf.value),
+                'EdgeOut': int(bool(self.edge.value)),
                 # loans are changed on their own buttons; keep whatever the book had
                 'LoanedTo': self.original.get('LoanedTo'),
                 'LoanedDate': self.original.get('LoanedDate'),
             })
+        if self.kind == 'digital':
+            data.update({
+                'Source': (self.source.value or '').strip() or None,
+                'Narrator': (self.narrator.value or '').strip() or None if audio else None,
+                'Length': length,
+                'Archived': self.original.get('Archived', 0),  # changed on its own button
+            })
         return data
 
     def clear(self) -> None:
-        for field in (self.isbn, self.title, self.edition, self.started, self.finished, self.comments):
+        for field in (self.isbn, self.title, self.edition, self.started, self.finished, self.comments, self.narrator,
+                      self.length):
             field.value = ''
         for field in (self.format, self.series, self.number_in_series, self.pages, self.shelf, self.rating, self.spice,
                       self.kink):
@@ -628,6 +699,7 @@ class BookForm:
         self.show_earlier([])
         self.format.set_options(db.names('Formats'), value=None)
         self.series.set_options(db.names('Series'), value=None)
+        self.source.set_options(db.sources(), value=None)
         self.status.set_text('')
         self.isbn.run_method('focus')
 
@@ -686,8 +758,15 @@ def open_editor(kind: str, book_id: int, on_change) -> None:
         with ui.row().classes('gap-2 flex-wrap'):
             button('SAVE', save)
             if kind == 'wished':
-                button('BOUGHT IT', lambda: (db.move_to_library(book_id),
-                                             done(f"{book['Title'].upper()} MOVED TO THE LIBRARY.")))
+                # a printed book goes to the library, an ebook or audiobook to the digital list
+                button('GOT IT', lambda: done(f"{book['Title'].upper()} MOVED TO THE "
+                                              f"{KIND_NAMES[db.move_from_wishlist(book_id)[0]]}."))
+            if kind == 'digital':
+                # e.g. a library loan that is done: it leaves the list but keeps its readings for the statistics
+                archived = bool(book.get('Archived'))
+                button('UNARCHIVE' if archived else 'ARCHIVE', lambda: (
+                    db.set_archived(book_id, not archived),
+                    done(f"{book['Title'].upper()} {'BACK IN THE LIST' if archived else 'ARCHIVED'}.")))
             delete_btn = button('DELETE', delete, danger=True)
             button('CANCEL', dialog.close)
     dialog.on('hide', dialog.delete)
@@ -724,12 +803,25 @@ def in_saved_order(columns: list[dict], saved: list[str]) -> list[dict]:
 
 def book_grid(kind: str, columns: list[dict]) -> None:
     """Search box plus a grid with a filter under every column header; double-click a row to edit."""
+    shown = {'medium': None, 'archived': False}  # the digital list: which type, and the archived books or the rest
+
     def rows() -> list[dict]:
         books = db.list_books(kind)
+        if kind == 'digital':
+            books = [b for b in books if bool(b['Archived']) == shown['archived']
+                     and shown['medium'] in (None, b['Medium'])]
         for b in books:
             for col in ('Read', 'Signed', 'EdgeOut'):
                 b[col + 'Text'] = 'YES' if b.get(col) else 'NO'
+            if b.get('Medium'):
+                b['MediumText'] = MEDIUM_NAMES[b['Medium']]
         return books
+
+    def show_only(**which) -> None:
+        shown.update(which)
+        for (key, value), b in filter_buttons.items():
+            b.classes(**{'add' if shown[key] == value else 'remove': 'term-on'})
+        refresh()
 
     def refresh() -> None:
         grid.options['rowData'] = rows()
@@ -785,6 +877,16 @@ def book_grid(kind: str, columns: list[dict]) -> None:
         count = ui.label('').classes('term-dim')
         if kind == 'wished':
             button('ADD TO WISHLIST', lambda: ui.navigate.to('/insert?kind=wished'))
+        if kind == 'digital':
+            button('ADD DIGITAL BOOK', lambda: ui.navigate.to('/insert?kind=digital'))
+    filter_buttons = {}
+    if kind == 'digital':
+        with ui.row().classes('items-center gap-2'):
+            for label, medium in (('ALL', None), ('EBOOKS', 'Ebook'), ('AUDIOBOOKS', 'Audiobook')):
+                filter_buttons[('medium', medium)] = button(label, lambda m=medium: show_only(medium=m))
+            ui.label('//').classes('term-faint')
+            for label, archived in (('IN USE', False), ('ARCHIVED', True)):
+                filter_buttons[('archived', archived)] = button(label, lambda a=archived: show_only(archived=a))
     ui.label('TYPE IN THE BOXES UNDER THE HEADINGS TO FILTER A COLUMN  //  DOUBLE-CLICK A ROW TO OPEN IT  //  '
              'RIGHT-CLICK A HEADING TO FREEZE IT ON THE LEFT').classes('term-faint wide-only')
     ui.label('SWIPE THE TABLE SIDEWAYS FOR MORE COLUMNS  //  DRAG THE EDGE OF A HEADING TO RESIZE IT  //  '
@@ -834,7 +936,10 @@ def book_grid(kind: str, columns: list[dict]) -> None:
         if (window.innerWidth < {MOBILE_WIDTH} && e.finished && e.source === 'uiColumnResized' && e.colId === 'Title')
             emit(getElement({grid.id}).api.getColumn('Title').getActualWidth());
     }}''')
-    refresh()
+    if filter_buttons:
+        show_only()  # marks the chosen buttons and fills the grid
+    else:
+        refresh()
 
 
 # AG Grid's own heading layout (laid out right to left) plus an x on the right that hides the column and a
@@ -856,6 +961,8 @@ NUM = {'filter': 'agNumberColumnFilter'}
 BY_SURNAME = {':comparator': '(a, b) => termAuthorCompare(a, b)'}  # see shell()
 STARS = {':valueFormatter': 'p => p.value == null ? "" : "*".repeat(p.value)', **NUM}
 CHILIES = {':valueFormatter': f'p => p.value == null ? "" : p.value == 0 ? "0" : "{CHILI}".repeat(p.value)', **NUM}
+HOURS = {':valueFormatter': 'p => p.value == null ? "" : Math.floor(p.value / 60) + ":" + '
+                           'String(p.value % 60).padStart(2, "0")', **NUM}  # minutes shown as H:MM
 LINKS = {':valueFormatter': f'p => p.value == null ? "" : p.value == 0 ? "0" : "{CHAINS}".repeat(p.value)', **NUM}
 
 
@@ -887,11 +994,39 @@ def books_page() -> None:
     ])
 
 
+def digital_page() -> None:
+    frame('DIGITAL')
+    book_grid('digital', [
+        {'headerName': 'Type', 'field': 'MediumText'},
+        {'headerName': 'Title', 'field': 'Title', 'minWidth': 60},
+        {'headerName': 'Authors', 'field': 'Authors', **BY_SURNAME},
+        {'headerName': 'Narrator', 'field': 'Narrator'},
+        {'headerName': 'Series', 'field': 'SeriesTitle'},
+        {'headerName': '#', 'field': 'NumberInSeries', **NUM},
+        {'headerName': 'Genres', 'field': 'Genres'},
+        {'headerName': 'Tags', 'field': 'Tags'},
+        {'headerName': 'Source', 'field': 'Source'},
+        {'headerName': 'Printed pages', 'field': 'PageCount', **NUM},
+        {'headerName': 'Length', 'field': 'Length', **HOURS},
+        {'headerName': 'Rating', 'field': 'Rating', **STARS},
+        {'headerName': 'Spice', 'field': 'Spice', **CHILIES},
+        {'headerName': 'Kink', 'field': 'Kink', **LINKS},
+        {'headerName': 'Read', 'field': 'ReadText'},
+        {'headerName': 'Times read', 'field': 'TimesRead', **NUM},
+        {'headerName': 'Started', 'field': 'StartedDate'},
+        {'headerName': 'Finished', 'field': 'FinishedDate'},
+        {'headerName': 'Edition', 'field': 'Edition'},
+        {'headerName': 'ISBN', 'field': 'ISBN'},
+        {'headerName': 'Comments', 'field': 'Comments', 'maxWidth': 320},
+    ])
+
+
 def wishlist_page() -> None:
     frame('WISHLIST')
     book_grid('wished', [
         {'headerName': 'Title', 'field': 'Title', 'minWidth': 60},
         {'headerName': 'Authors', 'field': 'Authors', **BY_SURNAME},
+        {'headerName': 'Type', 'field': 'MediumText'},
         {'headerName': 'Series', 'field': 'SeriesTitle'},
         {'headerName': '#', 'field': 'NumberInSeries', **NUM},
         {'headerName': 'Genres', 'field': 'Genres'},
@@ -947,7 +1082,7 @@ def index_page(active: str, table: str, singular: str) -> None:
             ui.label(f"> {row['Name'].upper()}").classes('term-sub')
             ui.label(f'USED BY {len(books)} BOOK(S)').classes('term-dim')
             for kind, book_id, title in books:
-                ui.label(f"  {db.serial(kind, book_id)}  {title}" + ('  (WISHLIST)' if kind == 'wished' else ''))
+                ui.label(f"  {db.serial(kind, book_id)}  {title}" + (f'  ({KIND_NAMES[kind]})' if kind != 'owned' else ''))
             note = 'THE BOOKS ARE KEPT; THEY JUST LOSE THIS ENTRY.' if books else 'NO BOOKS USE IT.'
             ui.label(note).classes('term-faint mt-2')
             delete_btn = button('DELETE', lambda: delete(delete_btn), danger=True)
@@ -980,6 +1115,7 @@ def index_page(active: str, table: str, singular: str) -> None:
                  **(BY_SURNAME if table == 'Authors' else {}),
                  'filter': 'agTextColumnFilter', 'floatingFilter': True},
                 {'headerName': 'Books', 'field': 'Owned', 'flex': 1, 'filter': 'agNumberColumnFilter'},
+                {'headerName': 'Digital', 'field': 'Digital', 'flex': 1, 'filter': 'agNumberColumnFilter'},
                 {'headerName': 'Wishlist', 'field': 'Wished', 'flex': 1, 'filter': 'agNumberColumnFilter'},
             ],
             'rowData': [],
@@ -1074,18 +1210,20 @@ def loans_page() -> None:
 
 
 def reading_history_page() -> None:
-    """Every reading of every library book; click one to change its dates or delete it."""
+    """Every reading of every library and digital book; click one to change its dates or delete it."""
     frame('READING HISTORY')
 
     def rows() -> list[dict]:
         readings = db.list_readings()
         newest = {}
         for r in readings:
-            newest[r['BookID']] = max(newest.get(r['BookID'], 0), r['ReadingID'])
+            book = (r['Kind'], r['BookID'])
+            newest[book] = max(newest.get(book, 0), r['ReadingID'])
         for r in readings:
-            r['Serial'] = db.serial('owned', r['BookID'])
+            r['Serial'] = db.serial(r['Kind'], r['BookID'])
+            r['Type'] = MEDIUM_NAMES[r['Medium'] or 'Book']
             # an unfinished reading is still going only if it is the book's newest; an older one was given up
-            going = not r['FinishedDate'] and r['ReadingID'] == newest[r['BookID']]
+            going = not r['FinishedDate'] and r['ReadingID'] == newest[(r['Kind'], r['BookID'])]
             r['Status'] = 'FINISHED' if r['FinishedDate'] else 'READING' if going and r['StartedDate'] else 'STOPPED'
             start, end = r['StartedDate'], r['FinishedDate'] or (date.today().isoformat() if going else None)
             try:
@@ -1146,6 +1284,7 @@ def reading_history_page() -> None:
                 {'headerName': 'Serial', 'field': 'Serial', 'width': 90, 'pinned': 'left'},
                 {'headerName': 'Title', 'field': 'Title', 'flex': 3, 'minWidth': 140},
                 {'headerName': 'Authors', 'field': 'Authors', 'flex': 2, 'minWidth': 120, **BY_SURNAME},
+                {'headerName': 'Type', 'field': 'Type', 'width': 120},
                 {'headerName': '#', 'field': 'ReadingNo', 'width': 70, **NUM},
                 {'headerName': 'Started', 'field': 'StartedDate', 'width': 130},
                 {'headerName': 'Finished', 'field': 'FinishedDate', 'width': 130},
@@ -1178,6 +1317,10 @@ def stats_text(year: int, goal: int) -> str:
     lines = [f'&gt; QUERY READING_LOG --YEAR={year}', '']
     pct = min(100, round(s['books'] / goal * 100)) if goal else 0
     lines.append(dots('BOOKS READ', f"{s['books']:<5} GOAL {goal}  [{bar(s['books'], goal or 1, 20) if goal else ''}] {pct}%"))
+    if s['ebooks'] or s['audiobooks']:
+        listened = s['minutes_listened']
+        lines.append(dots('  OF THEM EBOOKS', s['ebooks']))
+        lines.append(dots('  OF THEM AUDIOBOOKS', f"{s['audiobooks']}  ({listened // 60}:{listened % 60:02d} HOURS)"))
     lines.append(dots('PAGES READ', fmt(s['pages'])))
     lines.append(dots('AVG PAGES PER BOOK', fmt(round(s['avg_pages'])) if s['avg_pages'] else '-'))
     lines.append(dots('DIFFERENT TITLES', s['titles']))
@@ -1204,6 +1347,9 @@ def stats_text(year: int, goal: int) -> str:
               dots('VOLUMES OWNED', f'{fmt(owned_books)}  ({fmt(owned_pages)} PAGES)'),
               dots('NOT YET READ', s['unread']),
               dots('READINGS, ALL YEARS', fmt(s['total_readings'])),
+              dots('EBOOKS', s['digital'][0]),
+              dots('AUDIOBOOKS', s['digital'][1]),
+              dots('DIGITAL, ARCHIVED', s['digital'][2]),
               dots('ON LOAN', s['on_loan']),
               dots('SIGNED', s['signed']),
               dots('SPRAYED EDGES', s['sprayed']),
@@ -1405,6 +1551,7 @@ def bookshelf_route(path: str):
 ROUTES = {
     '/insert': insert_page,
     '/': books_page,
+    '/digital': digital_page,
     '/wishlist': wishlist_page,
     '/authors': authors_page,
     '/genres': genres_page,

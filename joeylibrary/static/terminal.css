@@ -80,6 +80,8 @@ body::before {
   font-family: var(--font-big); font-size: 22px; text-transform: uppercase; letter-spacing: .04em; }
 .q-btn.term-btn:hover, .q-btn.term-btn:focus-visible { background: var(--green) !important; color: var(--bg) !important; text-shadow: none; }
 .q-btn.term-btn .q-focus-helper { display: none; }
+/* the chosen one of a row of buttons that pick what a list shows (the digital list: type, archived) */
+.q-btn.term-btn.term-on { background: var(--green) !important; color: var(--bg) !important; text-shadow: none; }
 .q-btn.term-btn.danger { color: var(--red) !important; }
 .q-btn.term-btn.danger:hover { background: var(--red) !important; color: var(--bg) !important; }
 

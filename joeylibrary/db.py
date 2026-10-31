@@ -1,5 +1,6 @@
 """SQLite access for the library. Every function opens its own short-lived connection."""
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import date
@@ -14,9 +15,14 @@ DB_PATH = Path(os.environ.get('JOEY_LIBRARY_DB', DATA_DIR / 'library.db'))
 TABLES = {
     'owned': ('BooksOwned', 'BooksOwnedGenres', 'BooksOwnedAuthors', 'BooksOwnedTags'),
     'wished': ('BooksWished', 'BooksWishedGenres', 'BooksWishedAuthors', 'BooksWishedTags'),
+    'digital': ('BooksDigital', 'BooksDigitalGenres', 'BooksDigitalAuthors', 'BooksDigitalTags'),
 }
-# shown to the user in front of the BookID, which is a plain number in the database: L0007, W0012
-ID_PREFIX = {'owned': 'L', 'wished': 'W'}
+# shown to the user in front of the BookID, which is a plain number in the database: L0007, W0012, D0003
+ID_PREFIX = {'owned': 'L', 'wished': 'W', 'digital': 'D'}
+# the kinds with a reading history, and the ReadingHistory column that points at their book
+READ_BY = {'owned': 'BookID', 'digital': 'DigitalID'}
+HAS_FORMAT = ('owned', 'wished')  # a digital book's medium (ebook / audiobook) takes the place of a format
+MEDIUMS = ('Ebook', 'Audiobook')  # of a digital book; a wished book can also be a 'Book'
 SERIAL_DIGITS = 4
 
 
@@ -26,7 +32,9 @@ def serial(kind: str, book_id: int) -> str:
 COLUMNS = {
     'owned': ['Title', 'Edition', 'LoanedTo', 'LoanedDate', 'Rating', 'Spice', 'Kink', 'Comments', 'ShelfNumber',
               'NumberInSeries', 'Signed', 'EdgeOut', 'Read', 'PageCount', 'ISBN'],
-    'wished': ['Title', 'Edition', 'NumberInSeries', 'Signed', 'Spice', 'Kink', 'ISBN'],
+    'wished': ['Title', 'Edition', 'NumberInSeries', 'Signed', 'Spice', 'Kink', 'ISBN', 'Medium'],
+    'digital': ['Title', 'Medium', 'Edition', 'Narrator', 'Length', 'Source', 'Rating', 'Spice', 'Kink', 'Comments',
+                'NumberInSeries', 'Read', 'PageCount', 'ISBN', 'Archived'],
 }
 LOOKUPS = {  # table -> (id column, name column)
     'Authors': ('AuthorID', 'AuthorName'),
@@ -42,6 +50,8 @@ def connect():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys = ON')
+    # a title compared the way people read it: case (also æøå) and runs of spaces don't matter
+    conn.create_function('fold', 1, lambda s: ' '.join(s.split()).casefold() if s else '', deterministic=True)
     try:
         yield conn
         conn.commit()
@@ -59,10 +69,21 @@ def init_db() -> None:
     upgrade()
 
 
+def _schema_table(name: str) -> str:
+    """The CREATE TABLE statement for one table in the schema file."""
+    return re.search(rf'CREATE TABLE {name} \(.*?\n\);', SCHEMA_FILE.read_text(encoding='utf-8'), re.S).group(0)
+
+
 def upgrade() -> None:
     """Bring a database made by an older version of the app up to date."""
     with connect() as conn:
         conn.execute('CREATE TABLE IF NOT EXISTS Tags (TagID INTEGER PRIMARY KEY, TagName VARCHAR(100) NOT NULL UNIQUE)')
+        # the digital list (ebooks and audiobooks) came later
+        for table in ('BooksDigital', 'BooksDigitalGenres', 'BooksDigitalAuthors', 'BooksDigitalTags'):
+            conn.execute(_schema_table(table).replace('CREATE TABLE', 'CREATE TABLE IF NOT EXISTS', 1))
+        if 'Medium' not in {r['name'] for r in conn.execute('PRAGMA table_info(BooksWished)')}:
+            conn.execute("ALTER TABLE BooksWished ADD COLUMN Medium VARCHAR(20) NOT NULL DEFAULT 'Book' "
+                         "CHECK (Medium IN ('Book', 'Ebook', 'Audiobook'))")
         for book in KINDS.values():
             conn.execute(f'''CREATE TABLE IF NOT EXISTS {book}Tags (
                 BookID INTEGER, TagID INTEGER, PRIMARY KEY (BookID, TagID),
@@ -72,10 +93,14 @@ def upgrade() -> None:
             for rating in ('Spice', 'Kink'):
                 if rating not in columns:
                     conn.execute(f'ALTER TABLE {book} ADD COLUMN {rating} INTEGER CHECK ({rating} >= 0 AND {rating} <= 5)')
-        conn.execute('''CREATE TABLE IF NOT EXISTS ReadingHistory (
-            ReadingID INTEGER PRIMARY KEY,
-            BookID INTEGER NOT NULL REFERENCES BooksOwned(BookID) ON DELETE CASCADE,
-            StartedDate TEXT, FinishedDate TEXT)''')
+        conn.execute(_schema_table('ReadingHistory').replace('CREATE TABLE', 'CREATE TABLE IF NOT EXISTS', 1))
+        # readings of digital books: the table is rebuilt with a DigitalID column and BookID no longer required
+        if 'DigitalID' not in {r['name'] for r in conn.execute('PRAGMA table_info(ReadingHistory)')}:
+            conn.execute(_schema_table('ReadingHistory').replace('ReadingHistory', 'ReadingHistoryNew', 1))
+            conn.execute('INSERT INTO ReadingHistoryNew (ReadingID, BookID, StartedDate, FinishedDate) '
+                         'SELECT ReadingID, BookID, StartedDate, FinishedDate FROM ReadingHistory')
+            conn.execute('DROP TABLE ReadingHistory')
+            conn.execute('ALTER TABLE ReadingHistoryNew RENAME TO ReadingHistory')
         # the started/finished dates used to be columns on the book; they are dropped, not carried over
         columns = {r['name'] for r in conn.execute('PRAGMA table_info(BooksOwned)')}
         if 'StartedDate' in columns:
@@ -105,9 +130,14 @@ def _id_for(conn, table: str, name: str | None) -> int | None:
 
 
 # Index pages. 'Edition' is not a table but a text column on both book tables; it is edited across all books.
-KINDS = {'owned': 'BooksOwned', 'wished': 'BooksWished'}
+KINDS = {kind: tables[0] for kind, tables in TABLES.items()}
 REF_COLUMNS = {'Formats': 'Format', 'Series': 'SeriesName'}  # lookups referenced by a column on the book
-# Authors, Genres and Tags are referenced through link tables named Books<Owned|Wished><Authors|Genres|Tags>
+# Authors, Genres and Tags are referenced through link tables named Books<Owned|Wished|Digital><Authors|Genres|Tags>
+
+
+def _kinds_with(table: str) -> dict:
+    """The book tables that can use an index entry (digital books have no format)."""
+    return {k: b for k, b in KINDS.items() if table != 'Formats' or k in HAS_FORMAT}
 
 
 def _usage(table: str, kind: str) -> str:
@@ -122,21 +152,24 @@ def _usage(table: str, kind: str) -> str:
 
 
 def list_index(table: str) -> list[dict]:
-    """Every entry with how many library and wishlist books use it."""
+    """Every entry with how many library, wishlist and digital books use it."""
     with connect() as conn:
         if table == 'Edition':
-            sql = '''SELECT Edition AS ID, Edition AS Name, SUM(k = 'owned') AS Owned, SUM(k = 'wished') AS Wished
-                     FROM (SELECT Edition, 'owned' AS k FROM BooksOwned UNION ALL SELECT Edition, 'wished' FROM BooksWished)
+            sql = '''SELECT Edition AS ID, Edition AS Name, SUM(k = 'owned') AS Owned, SUM(k = 'wished') AS Wished,
+                            SUM(k = 'digital') AS Digital
+                     FROM (SELECT Edition, 'owned' AS k FROM BooksOwned UNION ALL SELECT Edition, 'wished' FROM BooksWished
+                           UNION ALL SELECT Edition, 'digital' FROM BooksDigital)
                      WHERE Edition IS NOT NULL AND Edition <> '' GROUP BY Edition ORDER BY Edition COLLATE NOCASE'''
         else:
             id_col, name_col = LOOKUPS[table]
-            counts = []
-            for kind, book in KINDS.items():
+            counts = {kind: '0' for kind in KINDS}
+            for kind, book in _kinds_with(table).items():
                 if table in REF_COLUMNS:
-                    counts.append(f'(SELECT COUNT(*) FROM {book} x WHERE x.{REF_COLUMNS[table]} = t.{id_col})')
+                    counts[kind] = f'(SELECT COUNT(*) FROM {book} x WHERE x.{REF_COLUMNS[table]} = t.{id_col})'
                 else:
-                    counts.append(f'(SELECT COUNT(*) FROM {book}{table} x WHERE x.{id_col} = t.{id_col})')
-            sql = (f'SELECT t.{id_col} AS ID, t.{name_col} AS Name, {counts[0]} AS Owned, {counts[1]} AS Wished '
+                    counts[kind] = f'(SELECT COUNT(*) FROM {book}{table} x WHERE x.{id_col} = t.{id_col})'
+            sql = (f"SELECT t.{id_col} AS ID, t.{name_col} AS Name, {counts['owned']} AS Owned, "
+                   f"{counts['wished']} AS Wished, {counts['digital']} AS Digital "
                    f'FROM {table} t ORDER BY t.{name_col} COLLATE NOCASE')
         return [dict(r) for r in conn.execute(sql)]
 
@@ -144,7 +177,7 @@ def list_index(table: str) -> list[dict]:
 def books_using(table: str, item_id) -> list[tuple[str, int, str]]:
     """(kind, BookID, title) of every book that uses an index entry."""
     with connect() as conn:
-        return [(kind, r[0], r[1]) for kind in KINDS
+        return [(kind, r[0], r[1]) for kind in _kinds_with(table)
                 for r in conn.execute(_usage(table, kind) + ' ORDER BY 2 COLLATE NOCASE', (item_id,))]
 
 
@@ -171,7 +204,7 @@ def rename_index(table: str, item_id, new_name: str) -> str:
         if not other:
             conn.execute(f'UPDATE {table} SET {name_col} = ? WHERE {id_col} = ?', (new_name, item_id))
             return 'renamed'
-        for book in KINDS.values():
+        for book in _kinds_with(table).values():
             if table in REF_COLUMNS:
                 col = REF_COLUMNS[table]
                 conn.execute(f'UPDATE {book} SET {col} = ? WHERE {col} = ?', (other[0], item_id))
@@ -192,9 +225,16 @@ def delete_index(table: str, item_id) -> None:
             return
         id_col = LOOKUPS[table][0]
         if table in REF_COLUMNS:
-            for book in KINDS.values():
+            for book in _kinds_with(table).values():
                 conn.execute(f'UPDATE {book} SET {REF_COLUMNS[table]} = NULL WHERE {REF_COLUMNS[table]} = ?', (item_id,))
         conn.execute(f'DELETE FROM {table} WHERE {id_col} = ?', (item_id,))  # link rows go by ON DELETE CASCADE
+
+
+def sources() -> list[str]:
+    """Where the digital books live (Kindle, Audible, ...), for the SOURCE field's list."""
+    with connect() as conn:
+        return [r[0] for r in conn.execute(
+            "SELECT DISTINCT Source FROM BooksDigital WHERE Source IS NOT NULL AND Source <> '' ORDER BY 1 COLLATE NOCASE")]
 
 
 def borrowers() -> list[str]:
@@ -205,13 +245,13 @@ def borrowers() -> list[str]:
 
 # ---------- books ----------
 
-# the newest reading of a library book, and how many readings were finished
+# the newest reading of a library or digital book, and how many readings were finished (col: see READ_BY)
 LATEST_READING = '''
-               (SELECT StartedDate FROM ReadingHistory r WHERE r.BookID = b.BookID ORDER BY ReadingID DESC LIMIT 1)
+               (SELECT StartedDate FROM ReadingHistory r WHERE r.{col} = b.BookID ORDER BY ReadingID DESC LIMIT 1)
                    AS StartedDate,
-               (SELECT FinishedDate FROM ReadingHistory r WHERE r.BookID = b.BookID ORDER BY ReadingID DESC LIMIT 1)
+               (SELECT FinishedDate FROM ReadingHistory r WHERE r.{col} = b.BookID ORDER BY ReadingID DESC LIMIT 1)
                    AS FinishedDate,
-               (SELECT COUNT(*) FROM ReadingHistory r WHERE r.BookID = b.BookID AND r.FinishedDate IS NOT NULL)
+               (SELECT COUNT(*) FROM ReadingHistory r WHERE r.{col} = b.BookID AND r.FinishedDate IS NOT NULL)
                    AS TimesRead,'''
 
 
@@ -219,7 +259,8 @@ def _select_books(kind: str, where: str = '') -> str:
     book, genre_link, author_link, tag_link = TABLES[kind]
     # authors are listed in the order they were linked, so the main author comes first
     return f'''
-        SELECT b.*, f.FormatName, s.SeriesName AS SeriesTitle,{LATEST_READING if kind == 'owned' else ''}
+        SELECT b.*, {'f.FormatName' if kind in HAS_FORMAT else 'NULL AS FormatName'}, s.SeriesName AS SeriesTitle,{
+               LATEST_READING.format(col=READ_BY[kind]) if kind in READ_BY else ''}
                (SELECT group_concat(AuthorName, ', ') FROM (
                     SELECT a.AuthorName FROM {author_link} ba JOIN Authors a USING (AuthorID)
                     WHERE ba.BookID = b.BookID ORDER BY ba.rowid)) AS Authors,
@@ -230,7 +271,7 @@ def _select_books(kind: str, where: str = '') -> str:
                     SELECT t.TagName FROM {tag_link} bt JOIN Tags t USING (TagID)
                     WHERE bt.BookID = b.BookID ORDER BY t.TagName)) AS Tags
         FROM {book} b
-        LEFT JOIN Formats f ON f.FormatID = b.Format
+        {'LEFT JOIN Formats f ON f.FormatID = b.Format' if kind in HAS_FORMAT else ''}
         LEFT JOIN Series s ON s.SeriesID = b.SeriesName
         {where}
         ORDER BY b.Title COLLATE NOCASE'''
@@ -254,10 +295,10 @@ def get_book(kind: str, book_id: int) -> dict:
         row['TagList'] = [r[0] for r in conn.execute(
             f'SELECT t.TagName FROM {tag_link} bt JOIN Tags t USING (TagID) '
             f'WHERE bt.BookID = ? ORDER BY t.TagName', (book_id,))]
-        if kind == 'owned':
+        if kind in READ_BY:
             row['Readings'] = [dict(r) for r in conn.execute(
-                'SELECT ReadingID, StartedDate, FinishedDate FROM ReadingHistory WHERE BookID = ? ORDER BY ReadingID',
-                (book_id,))]
+                f'SELECT ReadingID, StartedDate, FinishedDate FROM ReadingHistory WHERE {READ_BY[kind]} = ? '
+                f'ORDER BY ReadingID', (book_id,))]
     return row
 
 
@@ -270,11 +311,16 @@ def _free_id(conn, table: str) -> int:
 
 def save_book(kind: str, data: dict, book_id: int | None = None) -> int:
     """Insert or update a book. data holds COLUMNS[kind] plus FormatName, SeriesTitle, AuthorList, GenreList, TagList,
-    and for library books Readings: the whole reading history, oldest first."""
+    and for library and digital books Readings: the whole reading history, oldest first."""
     book, genre_link, author_link, tag_link = TABLES[kind]
     with connect() as conn:
         values = {c: data.get(c) for c in COLUMNS[kind]}
-        values['Format'] = _id_for(conn, 'Formats', data.get('FormatName'))
+        if kind in HAS_FORMAT:
+            values['Format'] = _id_for(conn, 'Formats', data.get('FormatName'))
+        if kind == 'wished':
+            values['Medium'] = values['Medium'] or 'Book'
+        if kind == 'digital':
+            values['Archived'] = int(bool(values['Archived']))
         values['SeriesName'] = _id_for(conn, 'Series', data.get('SeriesTitle'))
         cols = list(values)
         if book_id is None:
@@ -294,11 +340,12 @@ def save_book(kind: str, data: dict, book_id: int | None = None) -> int:
         conn.execute(f'DELETE FROM {tag_link} WHERE BookID = ?', (book_id,))
         for name in dict.fromkeys(data.get('TagList') or []):
             conn.execute(f'INSERT OR IGNORE INTO {tag_link} VALUES (?, ?)', (book_id, _id_for(conn, 'Tags', name)))
-        if kind == 'owned' and 'Readings' in data:
-            conn.execute('DELETE FROM ReadingHistory WHERE BookID = ?', (book_id,))
+        if kind in READ_BY and 'Readings' in data:
+            col = READ_BY[kind]
+            conn.execute(f'DELETE FROM ReadingHistory WHERE {col} = ?', (book_id,))
             for r in data['Readings']:
                 if r.get('StartedDate') or r.get('FinishedDate'):
-                    conn.execute('INSERT INTO ReadingHistory (BookID, StartedDate, FinishedDate) VALUES (?, ?, ?)',
+                    conn.execute(f'INSERT INTO ReadingHistory ({col}, StartedDate, FinishedDate) VALUES (?, ?, ?)',
                                  (book_id, r.get('StartedDate'), r.get('FinishedDate')))
     return book_id
 
@@ -309,7 +356,7 @@ def delete_book(kind: str, book_id: int) -> None:
 
 
 def find_isbn(isbn: str) -> list[str]:
-    """Return where a book with this ISBN already is: 'owned', 'wished', both or neither."""
+    """Return the lists a book with this ISBN is already on: 'owned', 'wished', 'digital'."""
     found = []
     with connect() as conn:
         for kind, (book, *_) in TABLES.items():
@@ -318,12 +365,22 @@ def find_isbn(isbn: str) -> list[str]:
     return found
 
 
-def move_to_library(wished_id: int) -> int:
-    """'Bought it': copy a wishlist book into the library and remove it from the wishlist."""
+def move_from_wishlist(wished_id: int) -> tuple[str, int]:
+    """'Got it': copy a wishlist book into the library, or for an ebook or audiobook into the digital list, and
+    remove it from the wishlist. Returns the kind and BookID it got."""
     data = get_book('wished', wished_id)
-    new_id = save_book('owned', data)
+    kind = 'digital' if data.get('Medium') in MEDIUMS else 'owned'
+    if kind == 'digital':
+        data['Archived'] = 0
+    new_id = save_book(kind, data)
     delete_book('wished', wished_id)
-    return new_id
+    return kind, new_id
+
+
+def set_archived(book_id: int, archived: bool) -> None:
+    """Archive a digital book (a library loan that is done) or bring it back; it keeps its readings either way."""
+    with connect() as conn:
+        conn.execute('UPDATE BooksDigital SET Archived = ? WHERE BookID = ?', (int(archived), book_id))
 
 
 def lend(book_id: int, borrower: str, when: str | None = None) -> None:
@@ -340,16 +397,16 @@ def return_book(book_id: int) -> None:
 # ---------- reading history ----------
 
 def list_readings() -> list[dict]:
-    """Every reading of every library book, newest first, with the book's title and authors."""
+    """Every reading of every library and digital book, newest first, with the book's kind, title and authors."""
     with connect() as conn:
-        return [dict(r) for r in conn.execute('''
-            SELECT r.ReadingID, r.BookID, r.StartedDate, r.FinishedDate, b.Title,
+        return [dict(r) for r in conn.execute(f'''{ITEMS}
+            SELECT r.ReadingID, i.Kind, i.ID AS BookID, r.StartedDate, r.FinishedDate, i.Title, i.Medium,
                    (SELECT group_concat(AuthorName, ', ') FROM (
-                        SELECT a.AuthorName FROM BooksOwnedAuthors ba JOIN Authors a USING (AuthorID)
-                        WHERE ba.BookID = b.BookID ORDER BY ba.rowid)) AS Authors,
-                   (SELECT COUNT(*) FROM ReadingHistory x WHERE x.BookID = r.BookID AND x.ReadingID <= r.ReadingID)
-                       AS ReadingNo
-            FROM ReadingHistory r JOIN BooksOwned b USING (BookID)
+                        SELECT a.AuthorName FROM item_authors ia JOIN Authors a USING (AuthorID)
+                        WHERE ia.Kind = i.Kind AND ia.ID = i.ID ORDER BY ia.Pos)) AS Authors,
+                   (SELECT COUNT(*) FROM ReadingHistory x WHERE x.BookID IS r.BookID AND x.DigitalID IS r.DigitalID
+                        AND x.ReadingID <= r.ReadingID) AS ReadingNo
+            FROM ReadingHistory r JOIN items i ON {READING_ITEM}
             ORDER BY COALESCE(r.FinishedDate, r.StartedDate, '9999') DESC, r.ReadingID DESC''')]
 
 
@@ -373,45 +430,77 @@ def stat_years() -> list[int]:
     return sorted(years | {date.today().year}, reverse=True)
 
 
+# The library and the digital list as one set of items for the reading history and the statistics: Kind is 'owned'
+# or 'digital', ID the BookID in that list; their authors and genres likewise (Pos keeps the main author first).
+ITEMS = '''WITH items AS (
+        SELECT 'owned' AS Kind, BookID AS ID, Title, PageCount, Rating, Read, NULL AS Medium, NULL AS Length,
+               0 AS Archived FROM BooksOwned
+        UNION ALL SELECT 'digital', BookID, Title, PageCount, Rating, Read, Medium, Length, Archived FROM BooksDigital),
+    item_authors AS (
+        SELECT 'owned' AS Kind, BookID AS ID, AuthorID, rowid AS Pos FROM BooksOwnedAuthors
+        UNION ALL SELECT 'digital', BookID, AuthorID, rowid FROM BooksDigitalAuthors),
+    item_genres AS (
+        SELECT 'owned' AS Kind, BookID AS ID, GenreID FROM BooksOwnedGenres
+        UNION ALL SELECT 'digital', BookID, GenreID FROM BooksDigitalGenres)'''
+READING_ITEM = "i.Kind = CASE WHEN r.BookID IS NULL THEN 'digital' ELSE 'owned' END AND i.ID = COALESCE(r.BookID, r.DigitalID)"
+# Each book keeps its own reading log, but the statistics count books by title and authors: a fancy edition read after
+# the paperback, or the audiobook after the ebook, is a re-read of the same book. Work is the folded title plus the
+# sorted author ids. reads is every reading with its item and work.
+WORKS = ITEMS + f''',
+    works AS (
+        SELECT i.*, fold(i.Title) || char(31) || COALESCE((SELECT group_concat(AuthorID, ',') FROM (
+            SELECT AuthorID FROM item_authors x WHERE x.Kind = i.Kind AND x.ID = i.ID ORDER BY AuthorID)), '') AS Work
+        FROM items i),
+    reads AS (
+        SELECT r.ReadingID, r.StartedDate, r.FinishedDate, i.* FROM ReadingHistory r JOIN works i ON {READING_ITEM}) '''
+
+
 def stats(year: int) -> dict:
-    """Reading statistics for one year. Every finished reading counts, so a book read twice counts twice."""
+    """Reading statistics for one year, library and digital books together. Every finished reading counts, so a book
+    read twice counts twice; different titles, re-reads and unread books go by title and authors (see WORKS)."""
     y = str(year)
     finished = "r.FinishedDate IS NOT NULL AND strftime('%Y', r.FinishedDate) = ?"
-    readings = 'ReadingHistory r JOIN BooksOwned b USING (BookID)'
     with connect() as conn:
-        one = lambda sql, *args: conn.execute(sql, args).fetchone()  # noqa: E731
-        read = one(f'SELECT COUNT(*), COALESCE(SUM(b.PageCount), 0), AVG(b.PageCount), COUNT(DISTINCT b.BookID) '
-                   f'FROM {readings} WHERE {finished}', y)
+        one = lambda sql, *args: conn.execute(WORKS + sql, args).fetchone()  # noqa: E731
+        top = lambda sql, *args: [(r[0], r[1]) for r in conn.execute(WORKS + sql, args)]  # noqa: E731
+        read = one(f'''SELECT COUNT(*), COALESCE(SUM(PageCount), 0), AVG(PageCount), COUNT(DISTINCT Work),
+                          SUM(Medium = 'Ebook'), SUM(Medium = 'Audiobook'),
+                          COALESCE(SUM(CASE WHEN Medium = 'Audiobook' THEN Length END), 0)
+                   FROM reads r WHERE {finished}''', y)
         months = {r[0]: (r[1], r[2]) for r in conn.execute(
-            f"SELECT CAST(strftime('%m', r.FinishedDate) AS INTEGER), COUNT(*), COALESCE(SUM(b.PageCount), 0) "
-            f'FROM {readings} WHERE {finished} GROUP BY 1', (y,))}
-        top = lambda sql, *args: [(r[0], r[1]) for r in conn.execute(sql, args)]  # noqa: E731
+            f"{WORKS}SELECT CAST(strftime('%m', r.FinishedDate) AS INTEGER), COUNT(*), COALESCE(SUM(PageCount), 0) "
+            f'FROM reads r WHERE {finished} GROUP BY 1', (y,))}
         return {
             'books': read[0], 'pages': read[1], 'avg_pages': read[2], 'titles': read[3],
-            'avg_rating': one(f'SELECT AVG(Rating) FROM BooksOwned WHERE BookID IN '
-                              f'(SELECT BookID FROM ReadingHistory r WHERE {finished})', y)[0],
-            # finished readings of a book that had been finished before
-            'rereads': one(f'''SELECT COUNT(*) FROM ReadingHistory r WHERE {finished} AND EXISTS (
-                                SELECT 1 FROM ReadingHistory p WHERE p.BookID = r.BookID AND p.ReadingID < r.ReadingID
-                                AND p.FinishedDate IS NOT NULL)''', y)[0],
+            'ebooks': read[4] or 0, 'audiobooks': read[5] or 0, 'minutes_listened': read[6],
+            'avg_rating': one(f'''SELECT AVG(Rating) FROM items WHERE (Kind, ID) IN (
+                                  SELECT Kind, ID FROM reads r WHERE {finished})''', y)[0],
+            # finished readings of a book that had been finished before, in this edition, another or another medium
+            'rereads': one(f'''SELECT COUNT(*) FROM reads r WHERE {finished} AND EXISTS (
+                                SELECT 1 FROM reads p WHERE p.Work = r.Work AND p.FinishedDate IS NOT NULL
+                                AND (p.FinishedDate < r.FinishedDate
+                                     OR (p.FinishedDate = r.FinishedDate AND p.ReadingID < r.ReadingID)))''', y)[0],
             'months': [(m, *months.get(m, (0, 0))) for m in range(1, 13)],
-            'genres': top(f'''SELECT g.GenreName, COUNT(*) FROM ReadingHistory r
-                              JOIN BooksOwnedGenres USING (BookID) JOIN Genres g USING (GenreID)
-                              WHERE {finished} GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 8''', y),
-            'authors': top(f'''SELECT a.AuthorName, COUNT(*) FROM ReadingHistory r
-                               JOIN BooksOwnedAuthors USING (BookID) JOIN Authors a USING (AuthorID)
-                               WHERE {finished} GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 5''', y),
+            'genres': top(f'''SELECT g.GenreName, COUNT(*) FROM reads r JOIN item_genres ig USING (Kind, ID)
+                              JOIN Genres g USING (GenreID) WHERE {finished} GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 8''', y),
+            'authors': top(f'''SELECT a.AuthorName, COUNT(*) FROM reads r JOIN item_authors ia USING (Kind, ID)
+                               JOIN Authors a USING (AuthorID) WHERE {finished} GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 5''', y),
             # books whose newest reading has started but not finished
-            'reading': one('''SELECT COUNT(*) FROM ReadingHistory r WHERE r.StartedDate IS NOT NULL
-                              AND r.FinishedDate IS NULL AND r.ReadingID =
-                                  (SELECT MAX(ReadingID) FROM ReadingHistory x WHERE x.BookID = r.BookID)''')[0],
+            'reading': one('''SELECT COUNT(*) FROM reads r WHERE r.StartedDate IS NOT NULL AND r.FinishedDate IS NULL
+                              AND r.ReadingID = (SELECT MAX(ReadingID) FROM reads x WHERE x.Kind = r.Kind AND x.ID = r.ID)''')[0],
             'total_readings': one('SELECT COUNT(*) FROM ReadingHistory WHERE FinishedDate IS NOT NULL')[0],
-            'most_reread': top('''SELECT b.Title, COUNT(*) FROM ReadingHistory r JOIN BooksOwned b USING (BookID)
-                                  WHERE r.FinishedDate IS NOT NULL GROUP BY b.BookID HAVING COUNT(*) > 1
-                                  ORDER BY 2 DESC, 1 COLLATE NOCASE LIMIT 5'''),
+            # named as the book was at its first reading (the bare Title comes from the row MIN picks)
+            'most_reread': top('''SELECT Title, COUNT(*), MIN(ReadingID) FROM reads WHERE FinishedDate IS NOT NULL
+                                  GROUP BY Work HAVING COUNT(*) > 1 ORDER BY 2 DESC, 1 COLLATE NOCASE LIMIT 5'''),
             'owned': one('SELECT COUNT(*), COALESCE(SUM(PageCount), 0) FROM BooksOwned'),
-            'unread': one('''SELECT COUNT(*) FROM BooksOwned b WHERE COALESCE(Read, 0) = 0 AND NOT EXISTS (
-                             SELECT 1 FROM ReadingHistory r WHERE r.BookID = b.BookID AND r.FinishedDate IS NOT NULL)''')[0],
+            # books on the shelf or in the digital list (not archived) of which no edition has been read
+            'unread': one('''SELECT COUNT(DISTINCT w.Work) FROM works w WHERE w.Archived = 0 AND NOT EXISTS (
+                             SELECT 1 FROM works o WHERE o.Work = w.Work AND (COALESCE(o.Read, 0) <> 0
+                                 OR EXISTS (SELECT 1 FROM reads r WHERE r.Kind = o.Kind AND r.ID = o.ID
+                                            AND r.FinishedDate IS NOT NULL)))''')[0],
+            'digital': tuple(one('''SELECT COALESCE(SUM(Medium = 'Ebook' AND Archived = 0), 0),
+                                    COALESCE(SUM(Medium = 'Audiobook' AND Archived = 0), 0), COALESCE(SUM(Archived), 0)
+                                    FROM BooksDigital''')),
             'on_loan': one("SELECT COUNT(*) FROM BooksOwned WHERE LoanedTo IS NOT NULL AND LoanedTo <> ''")[0],
             'wished': one('SELECT COUNT(*) FROM BooksWished')[0],
             'signed': one('SELECT COUNT(*) FROM BooksOwned WHERE Signed = 1')[0],

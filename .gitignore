@@ -5,3 +5,7 @@ __pycache__/
 .nicegui/
 .playwright-mcp/
 .claude/scheduled_tasks.lock
+
+# private details (network, logins, connections) never go into the public repo: see CLAUDE.md
+local/
+*.local.*

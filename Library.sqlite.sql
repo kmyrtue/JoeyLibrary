@@ -19,6 +19,10 @@ DROP TABLE IF EXISTS BooksWishedAuthors;
 DROP TABLE IF EXISTS BooksWishedGenres;
 DROP TABLE IF EXISTS BooksWished;
 DROP TABLE IF EXISTS ReadingHistory;
+DROP TABLE IF EXISTS BooksDigitalTags;
+DROP TABLE IF EXISTS BooksDigitalAuthors;
+DROP TABLE IF EXISTS BooksDigitalGenres;
+DROP TABLE IF EXISTS BooksDigital;
 DROP TABLE IF EXISTS BooksOwnedTags;
 DROP TABLE IF EXISTS BooksOwnedAuthors;
 DROP TABLE IF EXISTS BooksOwnedGenres;
@@ -106,13 +110,62 @@ CREATE TABLE BooksOwnedTags (
     FOREIGN KEY (TagID) REFERENCES Tags(TagID) ON DELETE CASCADE
 );
 
-/* Every time a library book was read; a book read three times has three rows. The newest row (highest
-   ReadingID) is the book's current reading, shown as STARTED / FINISHED in the book table. */
+/* Digital books sql: ebooks and audiobooks, a list of their own beside the library (serials D0001, ...). They share
+   authors, genres, tags and series with the other lists, and have no format, shelf, loans, signature or edges. */
+CREATE TABLE BooksDigital (
+    BookID  INTEGER PRIMARY KEY,
+    Title   VARCHAR(255) NOT NULL,
+    Medium  VARCHAR(20) NOT NULL CHECK (Medium IN ('Ebook', 'Audiobook')),
+    Edition VARCHAR(100),
+    Narrator VARCHAR(255),                             -- audiobooks; free text
+    Length INTEGER,                                    -- audiobooks; minutes
+    Source VARCHAR(100),                               -- where it lives: Kindle, Audible, Storytel, Libby ...
+    Rating INTEGER CHECK (Rating >= 0 AND Rating <= 5),
+    Spice INTEGER CHECK (Spice >= 0 AND Spice <= 5),
+    Kink INTEGER CHECK (Kink >= 0 AND Kink <= 5),
+    Comments TEXT,
+    NumberInSeries REAL,
+    SeriesName INTEGER REFERENCES Series(SeriesID),
+    Read INTEGER CHECK (Read IN (0, 1)),
+    PageCount INTEGER,                                 -- the pages of the printed book it equates to
+    ISBN VARCHAR(20),
+    Archived INTEGER NOT NULL DEFAULT 0 CHECK (Archived IN (0, 1))  -- e.g. a library loan that is done
+);
+
+CREATE TABLE BooksDigitalGenres (
+    BookID INTEGER,
+    GenreID INTEGER,
+    PRIMARY KEY (BookID, GenreID),
+    FOREIGN KEY (BookID) REFERENCES BooksDigital(BookID) ON DELETE CASCADE,
+    FOREIGN KEY (GenreID) REFERENCES Genres(GenreID) ON DELETE CASCADE
+);
+
+CREATE TABLE BooksDigitalAuthors (
+    BookID INTEGER,
+    AuthorID INTEGER,
+    PRIMARY KEY (BookID, AuthorID),
+    FOREIGN KEY (BookID) REFERENCES BooksDigital(BookID) ON DELETE CASCADE,
+    FOREIGN KEY (AuthorID) REFERENCES Authors(AuthorID) ON DELETE CASCADE
+);
+
+CREATE TABLE BooksDigitalTags (
+    BookID INTEGER,
+    TagID INTEGER,
+    PRIMARY KEY (BookID, TagID),
+    FOREIGN KEY (BookID) REFERENCES BooksDigital(BookID) ON DELETE CASCADE,
+    FOREIGN KEY (TagID) REFERENCES Tags(TagID) ON DELETE CASCADE
+);
+
+/* Every time a library or digital book was read; a book read three times has three rows. Each row belongs to
+   either a library book (BookID) or a digital book (DigitalID). A book's newest row (highest ReadingID) is its
+   current reading, shown as STARTED / FINISHED in the book table. */
 CREATE TABLE ReadingHistory (
     ReadingID INTEGER PRIMARY KEY,
-    BookID INTEGER NOT NULL REFERENCES BooksOwned(BookID) ON DELETE CASCADE,
+    BookID INTEGER REFERENCES BooksOwned(BookID) ON DELETE CASCADE,
+    DigitalID INTEGER REFERENCES BooksDigital(BookID) ON DELETE CASCADE,
     StartedDate TEXT,                                  -- 'YYYY-MM-DD'
-    FinishedDate TEXT                                  -- 'YYYY-MM-DD'
+    FinishedDate TEXT,                                 -- 'YYYY-MM-DD'
+    CHECK ((BookID IS NULL) <> (DigitalID IS NULL))
 );
 
 
@@ -127,7 +180,8 @@ CREATE TABLE BooksWished (
     Signed INTEGER CHECK (Signed IN (0, 1)),
     Spice INTEGER CHECK (Spice >= 0 AND Spice <= 5),
     Kink INTEGER CHECK (Kink >= 0 AND Kink <= 5),
-    ISBN VARCHAR(20)
+    ISBN VARCHAR(20),
+    Medium VARCHAR(20) NOT NULL DEFAULT 'Book' CHECK (Medium IN ('Book', 'Ebook', 'Audiobook'))  -- which list it goes to
 );
 
 /* Table to link genres with books (many-to-many relationship) */
