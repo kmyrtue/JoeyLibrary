@@ -62,6 +62,8 @@ body::before {
 .term-error { color: var(--red) !important; text-shadow: 0 0 6px rgba(255, 90, 74, .45); }
 .term-rule { border-top: 1px dashed var(--green-dim); width: 100%; margin: 8px 0; }
 .term-pre { white-space: pre; font-family: var(--font-big); font-size: 22px; line-height: 1.4; overflow-x: auto; max-width: 100%; }
+.term-month, .term-month-book { cursor: pointer; }
+.term-month:hover, .term-month-book:hover { background: var(--green-dim); }
 /* the x in a book table heading that hides the column */
 .term-col-hide { padding: 0 2px 0 6px; cursor: pointer; color: var(--green-dim); flex: none; }
 .term-col-hide:hover { color: var(--green); text-shadow: 0 0 6px var(--green); }

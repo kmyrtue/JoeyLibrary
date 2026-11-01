@@ -1308,8 +1308,10 @@ def bar(value: float, top: float, width: int = 24) -> str:
     return f'<span class="term-bar" style="width: {width}ch"><span style="width: {filled:.1f}%"></span></span>'
 
 
-def stats_text(year: int, goal: int) -> str:
-    """The statistics as monospaced HTML lines (names from the database are escaped)."""
+def stats_text(year: int, goal: int, open_months: set[int] = frozenset()) -> str:
+    """The statistics as monospaced HTML lines (names from the database are escaped). A month with books read can be
+    clicked open (data-month) to list them under it with their page counts; each listed book opens on a click
+    (data-book)."""
     s = db.stats(year)
     fmt = lambda n: f'{n:,}'.replace(',', '.')  # noqa: E731  Danish thousands separator
     dots = lambda label, value: f"  {label} {'.' * (24 - len(label))} {value}"  # noqa: E731
@@ -1331,7 +1333,20 @@ def stats_text(year: int, goal: int) -> str:
     top = max((m[1] for m in s['months']), default=0)
     for month, books, pages in s['months']:
         name = date(year, month, 1).strftime('%b').upper()
-        lines.append(f'  {name}    {bar(books, top)} {books:>3}   {fmt(pages):>7}')
+        line = f'{name}    {bar(books, top)} {books:>3}   {fmt(pages):>7}'
+        if not books:
+            lines.append(f'  {line}')
+            continue
+        is_open = month in open_months
+        lines.append(f'<span class="term-month" data-month="{month}">{"-" if is_open else "+"} {line}</span>')
+        if is_open:  # the title column ends where the month's PAGES column does
+            for r in db.month_readings(year, month):
+                medium = f"  {r['Medium'].upper()}" if r['Medium'] else ''
+                title = esc(f"{r['Title'][:26].upper():<26}")
+                extra = esc(f"  {(r['Authors'] or '')[:28].upper()}{medium}")
+                lines.append(f'<span class="term-month-book" data-book="{r["Kind"]}:{r["BookID"]}">'
+                             f"         {r['FinishedDate'][8:10]}  {title} {fmt(r['PageCount'] or 0):>7}"
+                             f'<span class="term-dim">{extra}</span></span>')
     if s['genres']:
         lines += ['', f'  GENRES READ IN {year}']
         gtop = s['genres'][0][1]
@@ -1365,7 +1380,29 @@ def stats_page() -> None:
     years = db.stat_years()
     year = ui.select(years, label='YEAR', value=years[0]).classes('w-32')
     output = ui.html(stats_text(years[0], goal), sanitize=False).classes('term-pre mt-2')  # stats_text escapes
-    year.on_value_change(lambda e: output.set_content(stats_text(e.value, goal)))
+    open_months: set[int] = set()
+
+    def refresh() -> None:
+        output.set_content(stats_text(year.value, goal, open_months))
+
+    def change_year() -> None:
+        open_months.clear()
+        refresh()
+
+    def clicked(e) -> None:
+        what = str(e.args)
+        if what.startswith('book:'):
+            kind, book_id = what[5:].split(':')
+            open_editor(kind, int(book_id), refresh)
+        else:
+            open_months.symmetric_difference_update({int(what)})
+            refresh()
+
+    year.on_value_change(change_year)
+    output.on('click', clicked, js_handler='''(e) => {
+        const book = e.target.closest('[data-book]'), month = e.target.closest('[data-month]');
+        if (book) emit('book:' + book.dataset.book); else if (month) emit(month.dataset.month);
+    }''')
 
 
 def settings_page() -> None:

@@ -510,6 +510,20 @@ def stats(year: int) -> dict:
         }
 
 
+def month_readings(year: int, month: int) -> list[dict]:
+    """The readings finished in one month, in the order they were finished, with each book's title, authors, medium
+    and page count (the same rows the month's line in stats() counts)."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(f'''{ITEMS}
+            SELECT i.Kind, i.ID AS BookID, r.FinishedDate, i.Title, i.Medium, i.PageCount,
+                   (SELECT group_concat(AuthorName, ', ') FROM (
+                        SELECT a.AuthorName FROM item_authors ia JOIN Authors a USING (AuthorID)
+                        WHERE ia.Kind = i.Kind AND ia.ID = i.ID ORDER BY ia.Pos)) AS Authors
+            FROM ReadingHistory r JOIN items i ON {READING_ITEM}
+            WHERE r.FinishedDate IS NOT NULL AND strftime('%Y-%m', r.FinishedDate) = ?
+            ORDER BY r.FinishedDate, r.ReadingID''', (f'{year}-{month:02d}',))]
+
+
 # ---------- the bookshelf simulation ----------
 # The room shows the library books (not the wishlist). Title, authors, pages and ISBN are the library's own and are
 # read and changed here; everything else the room keeps is in its own database (roomdb.py).
